@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Box, Paper, ToggleButton, ToggleButtonGroup } from "@mui/material";
+import {
+  Box,
+  Button,
+  Paper,
+  ToggleButton,
+  ToggleButtonGroup,
+  Typography,
+} from "@mui/material";
 import BrushIcon from "@mui/icons-material/Brush";
 import EraserIcon from "@mui/icons-material/AutoFixOff";
 import CircleIcon from "@mui/icons-material/Circle";
@@ -29,9 +36,18 @@ export default function App() {
   const highlightCanvasRef = useRef(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef(null);
+  const screenVideoRef = useRef(null);
+  const captureIntervalRef = useRef(null);
+  const frameCanvasRef = useRef(null);
 
   const [tool, setTool] = useState(TOOL.DRAW);
   const [size, setSize] = useState(SIZE.MEDIUM);
+  const [isCaptureRunning, setIsCaptureRunning] = useState(false);
+  const [captureCount, setCaptureCount] = useState(0);
+  const [lastCaptureAt, setLastCaptureAt] = useState(null);
+  const [lastFramePreviewUrl, setLastFramePreviewUrl] = useState("");
+  const [captureHistory, setCaptureHistory] = useState([]);
+  const [captureError, setCaptureError] = useState("");
 
   useEffect(() => {
     const resizeOne = (canvas) => {
@@ -194,6 +210,115 @@ export default function App() {
     canvas.releasePointerCapture(event.pointerId);
   };
 
+  const stopCaptureLoop = () => {
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+      captureIntervalRef.current = null;
+    }
+
+    const stream = screenVideoRef.current?.srcObject;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      screenVideoRef.current.srcObject = null;
+    }
+
+    setIsCaptureRunning(false);
+  };
+
+  const fakeGeminiVisionRequest = async ({ frameDataUrl, frameNumber, takenAt }) => {
+    // Simulated payload; replace with real fetch once API is wired.
+    const payload = {
+      model: "gemini-2.5-flash",
+      prompt: "Describe what is happening in this screenshot.",
+      imageFormat: "jpeg",
+      screenshotCapturedAt: takenAt,
+      screenshotNumber: frameNumber,
+      imageBytesApprox: frameDataUrl.length,
+    };
+
+    console.log("[SIMULATED GEMINI REQUEST]", payload);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  };
+
+  const captureAndSendFrame = async () => {
+    const video = screenVideoRef.current;
+    const canvas = frameCanvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return;
+
+    const ctx = canvas.getContext("2d");
+    const maxWidth = 1024;
+    const ratio = video.videoWidth / video.videoHeight;
+    const width = Math.min(maxWidth, video.videoWidth);
+    const height = Math.floor(width / ratio);
+
+    canvas.width = width;
+    canvas.height = height;
+    ctx.drawImage(video, 0, 0, width, height);
+
+    const frameDataUrl = canvas.toDataURL("image/jpeg", 0.75);
+    const now = new Date();
+
+    setCaptureCount((prev) => {
+      const next = prev + 1;
+      fakeGeminiVisionRequest({
+        frameDataUrl,
+        frameNumber: next,
+        takenAt: now.toISOString(),
+      });
+      return next;
+    });
+
+    setLastCaptureAt(now.toLocaleTimeString());
+    setLastFramePreviewUrl(frameDataUrl);
+    setCaptureHistory((prev) => {
+      const nextEntry = {
+        id: `${now.getTime()}-${Math.random().toString(36).slice(2)}`,
+        capturedAt: now.toLocaleTimeString(),
+        frameDataUrl,
+      };
+      return [nextEntry, ...prev].slice(0, 24);
+    });
+  };
+
+  const startCaptureLoop = async () => {
+    try {
+      setCaptureError("");
+      stopCaptureLoop();
+
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+
+      const video = screenVideoRef.current;
+      if (!video) return;
+
+      video.srcObject = stream;
+      await video.play();
+
+      setIsCaptureRunning(true);
+      captureAndSendFrame();
+      captureIntervalRef.current = setInterval(captureAndSendFrame, 3000);
+
+      const [track] = stream.getVideoTracks();
+      if (track) {
+        track.addEventListener("ended", () => {
+          stopCaptureLoop();
+        });
+      }
+    } catch (error) {
+      console.error("Failed to start screen capture:", error);
+      setCaptureError("Screen capture permission was denied or unavailable.");
+      stopCaptureLoop();
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopCaptureLoop();
+    };
+  }, []);
+
   return (
     <Box sx={{ height: "100vh", bgcolor: "#f3f4f6", p: 0 }}>
       <Box
@@ -250,6 +375,134 @@ export default function App() {
           </ToggleButton>
         </ToggleButtonGroup>
       </Box>
+
+      <Box
+        sx={{
+          position: "fixed",
+          right: 12,
+          bottom: 12,
+          zIndex: 11,
+          width: 320,
+          p: 1.5,
+          borderRadius: 2,
+          bgcolor: "rgba(17, 24, 39, 0.88)",
+          color: "#ffffff",
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+        }}
+      >
+        <Typography variant="subtitle2">
+          Screen Capture to Gemini (Simulated)
+        </Typography>
+
+        <Box sx={{ display: "flex", gap: 1 }}>
+          <Button
+            variant="contained"
+            color="success"
+            size="small"
+            onClick={startCaptureLoop}
+            disabled={isCaptureRunning}
+          >
+            Start 3s Capture
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={stopCaptureLoop}
+            disabled={!isCaptureRunning}
+            sx={{ borderColor: "#ffffff55", color: "#ffffff" }}
+          >
+            Stop
+          </Button>
+        </Box>
+
+        <Typography variant="caption">
+          Status: {isCaptureRunning ? "Running" : "Stopped"} | Captures:{" "}
+          {captureCount}
+        </Typography>
+
+        <Typography variant="caption">
+          Last capture: {lastCaptureAt ?? "N/A"}
+        </Typography>
+
+        <Button
+          variant="text"
+          size="small"
+          onClick={() => setCaptureHistory([])}
+          sx={{ color: "#cbd5e1", justifyContent: "flex-start", px: 0.5 }}
+        >
+          Clear saved screenshots
+        </Button>
+
+        {captureError ? (
+          <Typography variant="caption" sx={{ color: "#fecaca" }}>
+            {captureError}
+          </Typography>
+        ) : null}
+
+        {lastFramePreviewUrl ? (
+          <Box
+            component="img"
+            src={lastFramePreviewUrl}
+            alt="latest screen capture preview"
+            sx={{
+              width: "100%",
+              borderRadius: 1,
+              border: "1px solid #ffffff33",
+              objectFit: "cover",
+              maxHeight: 180,
+              bgcolor: "#000000",
+            }}
+          />
+        ) : null}
+
+        {captureHistory.length ? (
+          <Box
+            sx={{
+              mt: 0.5,
+              maxHeight: 190,
+              overflowY: "auto",
+              borderTop: "1px solid #ffffff22",
+              pt: 1,
+              display: "grid",
+              gap: 0.75,
+            }}
+          >
+            {captureHistory.map((entry) => (
+              <Box
+                key={entry.id}
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "90px 1fr",
+                  gap: 1,
+                  alignItems: "center",
+                }}
+              >
+                <Box
+                  component="img"
+                  src={entry.frameDataUrl}
+                  alt={`captured ${entry.capturedAt}`}
+                  sx={{
+                    width: 90,
+                    height: 54,
+                    borderRadius: 0.75,
+                    objectFit: "cover",
+                    border: "1px solid #ffffff2e",
+                    bgcolor: "#000000",
+                  }}
+                />
+                <Typography variant="caption" sx={{ color: "#d1d5db" }}>
+                  Captured at {entry.capturedAt}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+        ) : null}
+      </Box>
+
+      <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
+      <canvas ref={frameCanvasRef} style={{ display: "none" }} />
 
       <Paper
         elevation={0}
