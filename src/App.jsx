@@ -61,12 +61,6 @@ export default function App() {
   const [tool, setTool] = useState(TOOL.DRAW);
   const [size, setSize] = useState(SIZE.MEDIUM);
   const [isCaptureRunning, setIsCaptureRunning] = useState(false);
-  const [captureCount, setCaptureCount] = useState(0);
-  const [lastCaptureAt, setLastCaptureAt] = useState(null);
-  const [lastFramePreviewUrl, setLastFramePreviewUrl] = useState("");
-  const [captureHistory, setCaptureHistory] = useState([]);
-  const [captureError, setCaptureError] = useState("");
-  const [uploadStatus, setUploadStatus] = useState("No uploads yet");
   const [student, setStudent] = useState({ id: "", name: "" });
   const [nameInput, setNameInput] = useState("");
   const [wellDoneVisible, setWellDoneVisible] = useState(false);
@@ -272,24 +266,8 @@ export default function App() {
     setIsCaptureRunning(false);
   };
 
-  const fakeGeminiVisionRequest = async ({ frameDataUrl, frameNumber, takenAt }) => {
-    // Simulated payload; replace with real fetch once API is wired.
-    const payload = {
-      model: "gemini-2.5-flash",
-      prompt: "Describe what is happening in this screenshot.",
-      imageFormat: "jpeg",
-      screenshotCapturedAt: takenAt,
-      screenshotNumber: frameNumber,
-      imageBytesApprox: frameDataUrl.length,
-    };
-
-    console.log("[SIMULATED GEMINI REQUEST]", payload);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  };
-
   const uploadScreenshotToSupabase = async ({ frameDataUrl, takenAt }) => {
     if (!hasSupabaseConfig) {
-      setUploadStatus("Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to upload.");
       return;
     }
 
@@ -301,7 +279,6 @@ export default function App() {
     const classId = localStorage.getItem("classId") || "class-demo";
 
     if (!studentId || !studentName) {
-      setUploadStatus("Set your name first (student ID is created automatically).");
       return;
     }
     const filePath = `${classId}/${studentId}/${screenshotId}.jpg`;
@@ -333,8 +310,6 @@ export default function App() {
     if (insertError) {
       throw insertError;
     }
-
-    setUploadStatus(`Uploaded ${new Date(takenAt).toLocaleTimeString()}`);
   };
 
   const captureAndSendFrame = async () => {
@@ -355,39 +330,16 @@ export default function App() {
     const frameDataUrl = canvas.toDataURL("image/jpeg", 0.75);
     const now = new Date();
 
-    setCaptureCount((prev) => {
-      const next = prev + 1;
-      fakeGeminiVisionRequest({
-        frameDataUrl,
-        frameNumber: next,
-        takenAt: now.toISOString(),
-      });
-      return next;
-    });
-
-    setLastCaptureAt(now.toLocaleTimeString());
-    setLastFramePreviewUrl(frameDataUrl);
-    setCaptureHistory((prev) => {
-      const nextEntry = {
-        id: `${now.getTime()}-${Math.random().toString(36).slice(2)}`,
-        capturedAt: now.toLocaleTimeString(),
-        frameDataUrl,
-      };
-      return [nextEntry, ...prev].slice(0, 24);
-    });
-
     uploadScreenshotToSupabase({
       frameDataUrl,
       takenAt: now.toISOString(),
     }).catch((error) => {
       console.error("Supabase upload failed:", error);
-      setUploadStatus(`Upload failed: ${error.message}`);
     });
   };
 
   const startCaptureLoop = async () => {
     try {
-      setCaptureError("");
       stopCaptureLoop();
 
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -413,7 +365,6 @@ export default function App() {
       }
     } catch (error) {
       console.error("Failed to start screen capture:", error);
-      setCaptureError("Screen capture permission was denied or unavailable.");
       stopCaptureLoop();
     }
   };
@@ -452,11 +403,8 @@ export default function App() {
               borderRadius: 2,
             }}
           >
-            <Typography id="student-name-dialog-title" variant="h6" component="h2" gutterBottom>
-              Welcome
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Enter your name. A student ID will be created and saved on this device.
+            <Typography id="student-name-dialog-title" variant="h6" component="h2" sx={{ mb: 2 }} gutterBottom>
+              Welcome!
             </Typography>
             <TextField
               autoFocus
@@ -558,150 +506,6 @@ export default function App() {
             <CircleIcon sx={{ fontSize: 24 }} />
           </ToggleButton>
         </ToggleButtonGroup>
-      </Box>
-
-      <Box
-        sx={{
-          position: "fixed",
-          right: 12,
-          bottom: 12,
-          zIndex: 11,
-          width: 320,
-          p: 1.5,
-          borderRadius: 2,
-          bgcolor: "rgba(17, 24, 39, 0.88)",
-          color: "#ffffff",
-          display: "flex",
-          flexDirection: "column",
-          gap: 1,
-        }}
-      >
-        <Typography variant="subtitle2">
-          Screen Capture to Gemini (Simulated)
-        </Typography>
-
-        {isStudentRegistered ? (
-          <Box sx={{ mb: 0.5 }}>
-            <Typography variant="caption" sx={{ color: "#e2e8f0", display: "block" }}>
-              Student: <strong>{student.name}</strong>
-            </Typography>
-            <Typography
-              variant="caption"
-              sx={{ color: "#94a3b8", fontFamily: "monospace", fontSize: 10, wordBreak: "break-all" }}
-            >
-              ID: {student.id}
-            </Typography>
-          </Box>
-        ) : null}
-
-        <Box sx={{ display: "flex", gap: 1 }}>
-          <Button
-            variant="contained"
-            color="success"
-            size="small"
-            onClick={startCaptureLoop}
-            disabled={isCaptureRunning || !isStudentRegistered}
-          >
-            Start 3s Capture
-          </Button>
-        </Box>
-
-        <Typography variant="caption">
-          Status: {isCaptureRunning ? "Running" : "Stopped"} | Captures:{" "}
-          {captureCount}
-        </Typography>
-
-        <Typography variant="caption">
-          Last capture: {lastCaptureAt ?? "N/A"}
-        </Typography>
-
-        <Typography variant="caption">Upload: {uploadStatus}</Typography>
-
-        <Button
-          variant="text"
-          size="small"
-          onClick={() => setCaptureHistory([])}
-          sx={{ color: "#cbd5e1", justifyContent: "flex-start", px: 0.5 }}
-        >
-          Clear saved screenshots
-        </Button>
-
-        {captureError ? (
-          <Typography variant="caption" sx={{ color: "#fecaca" }}>
-            {captureError}
-          </Typography>
-        ) : null}
-
-        <Box
-          sx={{
-            mt: 0.5,
-            pt: 1,
-            borderTop: "1px solid #ffffff22",
-            display: "flex",
-            flexDirection: "column",
-            gap: 1,
-          }}
-        >
-          <Typography variant="caption" sx={{ color: "#94a3b8" }}>
-            Screenshots
-          </Typography>
-
-          {lastFramePreviewUrl ? (
-            <Box
-              component="img"
-              src={lastFramePreviewUrl}
-              alt="latest screen capture preview"
-              sx={{
-                width: "100%",
-                borderRadius: 1,
-                border: "1px solid #ffffff33",
-                objectFit: "cover",
-                maxHeight: 180,
-                bgcolor: "#000000",
-              }}
-            />
-          ) : null}
-
-          {captureHistory.length ? (
-            <Box
-              sx={{
-                maxHeight: 190,
-                overflowY: "auto",
-                display: "grid",
-                gap: 0.75,
-              }}
-            >
-              {captureHistory.map((entry) => (
-                <Box
-                  key={entry.id}
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: "90px 1fr",
-                    gap: 1,
-                    alignItems: "center",
-                  }}
-                >
-                  <Box
-                    component="img"
-                    src={entry.frameDataUrl}
-                    alt={`captured ${entry.capturedAt}`}
-                    sx={{
-                      width: 90,
-                      height: 54,
-                      borderRadius: 0.75,
-                      objectFit: "cover",
-                      border: "1px solid #ffffff2e",
-                      bgcolor: "#000000",
-                    }}
-                  />
-                  <Typography variant="caption" sx={{ color: "#d1d5db" }}>
-                    Captured at {entry.capturedAt}
-                  </Typography>
-                </Box>
-              ))}
-            </Box>
-          ) : null}
-        </Box>
       </Box>
 
       <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
