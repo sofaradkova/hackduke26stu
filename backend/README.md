@@ -14,9 +14,19 @@ No student/teacher UI, no auth, no WebSockets. Sessions and evaluations live **i
 
 ## Setup
 
+Create a **`backend/.env`** file (gitignored) with whatever you need, for example:
+
 ```bash
-cp .env.example .env
-# Optional: add OPENAI_API_KEY and set USE_MOCK_AI=false
+PORT=3001
+STORAGE_DIR=./uploads
+OPENAI_API_KEY=
+USE_MOCK_AI=true
+OPENAI_MODEL=gpt-4.1-nano
+```
+
+Then:
+
+```bash
 npm install
 npm run dev
 ```

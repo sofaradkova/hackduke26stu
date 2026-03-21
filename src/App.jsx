@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
+  CircularProgress,
   Paper,
   TextField,
   ToggleButton,
@@ -14,6 +15,18 @@ import CircleIcon from "@mui/icons-material/Circle";
 import HighlightAltIcon from "@mui/icons-material/HighlightAlt";
 import worksheetImage from "./assets/problem-set.png";
 import { supabase, hasSupabaseConfig } from "./supabaseClient";
+import {
+  createAiSession,
+  fetchAiSession,
+  postAiScreenshot,
+} from "./aiBackend.js";
+
+const SESSION_POLL_MS = 10_000;
+
+const CLASS_ID =
+  import.meta.env.VITE_CLASS_ID?.trim() || "class-demo";
+
+const LS_AI_STORE = "hackduke_ai_session";
 
 const TOOL = {
   DRAW: "draw",
@@ -98,6 +111,62 @@ export default function App() {
   const [nameInput, setNameInput] = useState("");
   const [wellDoneVisible, setWellDoneVisible] = useState(false);
 
+  /** AI backend: session + progressive evaluations (stored for this student in-session). */
+  const [aiSession, setAiSession] = useState(null);
+  const [aiEvaluations, setAiEvaluations] = useState([]);
+  const [sessionFromGet, setSessionFromGet] = useState(null);
+  const [sessionPollError, setSessionPollError] = useState(null);
+  const [sessionPollLoading, setSessionPollLoading] = useState(false);
+  const [sessionPollAt, setSessionPollAt] = useState(null);
+  const backendSessionIdRef = useRef(null);
+  const aiSessionRef = useRef(null);
+
+  useEffect(() => {
+    aiSessionRef.current = aiSession;
+  }, [aiSession]);
+
+  /** Poll GET /api/sessions/:id every 10s for full server state (testing). */
+  useEffect(() => {
+    const id = aiSession?.sessionId;
+    if (!id) {
+      setSessionFromGet(null);
+      setSessionPollError(null);
+      setSessionPollAt(null);
+      return;
+    }
+
+    let cancelled = false;
+    let firstPoll = true;
+
+    const run = async () => {
+      if (firstPoll) setSessionPollLoading(true);
+      setSessionPollError(null);
+      try {
+        const data = await fetchAiSession(id);
+        if (!cancelled) {
+          setSessionFromGet(data);
+          setSessionPollAt(new Date().toISOString());
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setSessionPollError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled && firstPoll) {
+          setSessionPollLoading(false);
+          firstPoll = false;
+        }
+      }
+    };
+
+    void run();
+    const timer = setInterval(run, SESSION_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [aiSession?.sessionId]);
+
   const isStudentRegistered = Boolean(student.id && student.name.trim());
 
   useEffect(() => {
@@ -113,6 +182,14 @@ export default function App() {
     localStorage.setItem(LS_STUDENT_NAME, trimmed);
     setStudent({ id, name: trimmed });
     setWellDoneVisible(false);
+    backendSessionIdRef.current = null;
+    setAiSession(null);
+    setAiEvaluations([]);
+    try {
+      localStorage.removeItem(LS_AI_STORE);
+    } catch {
+      /* ignore */
+    }
     // Start capture right after name is saved (browser will prompt for screen share).
     void startCaptureLoop();
   };
@@ -299,7 +376,7 @@ export default function App() {
     setIsCaptureRunning(false);
   };
 
-  const uploadScreenshotToSupabase = async ({ frameDataUrl, takenAt }) => {
+  const uploadScreenshotToSupabase = async ({ imageBlob, takenAt }) => {
     if (!hasSupabaseConfig) {
       return;
     }
@@ -309,15 +386,12 @@ export default function App() {
     // Read from localStorage so interval callbacks always see current identity (no stale closure).
     const studentId = localStorage.getItem(LS_STUDENT_ID) || student.id;
     const studentName = (localStorage.getItem(LS_STUDENT_NAME) || student.name || "").trim();
-    const classId = localStorage.getItem("classId") || "class-demo";
+    const classId = localStorage.getItem("classId") || CLASS_ID;
 
     if (!studentId || !studentName) {
       return;
     }
     const filePath = `${classId}/${studentId}/${screenshotId}.jpg`;
-
-    const response = await fetch(frameDataUrl);
-    const imageBlob = await response.blob();
 
     const { error: uploadError } = await supabase.storage
       .from(SCREENSHOT_BUCKET)
@@ -345,6 +419,65 @@ export default function App() {
     }
   };
 
+  const persistAiStore = (session, evaluations) => {
+    try {
+      const studentId = localStorage.getItem(LS_STUDENT_ID);
+      if (!studentId) return;
+      localStorage.setItem(
+        LS_AI_STORE,
+        JSON.stringify({
+          studentId,
+          session,
+          evaluations,
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const sendFrameToAiBackend = async (imageBlob) => {
+    const studentId = localStorage.getItem(LS_STUDENT_ID) || student.id;
+    if (!studentId) return;
+
+    try {
+      if (!backendSessionIdRef.current) {
+        const data = await createAiSession(imageBlob, studentId, CLASS_ID);
+        backendSessionIdRef.current = data.sessionId;
+        const next = {
+          sessionId: data.sessionId,
+          sourceOfTruth: data.sourceOfTruth,
+          status: data.status,
+        };
+        setAiSession(next);
+        persistAiStore(next, []);
+      } else {
+        const evalResult = await postAiScreenshot(backendSessionIdRef.current, imageBlob);
+        setAiEvaluations((prev) => {
+          const next = [
+            ...prev,
+            {
+              at: new Date().toISOString(),
+              ...evalResult,
+            },
+          ];
+          persistAiStore(
+            {
+              sessionId: backendSessionIdRef.current,
+              sourceOfTruth: aiSessionRef.current?.sourceOfTruth,
+              status: aiSessionRef.current?.status,
+            },
+            next,
+          );
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error("AI backend request failed:", error);
+    }
+  };
+
   const captureAndSendFrame = async () => {
     const video = screenVideoRef.current;
     const canvas = frameCanvasRef.current;
@@ -362,18 +495,29 @@ export default function App() {
 
     const frameDataUrl = canvas.toDataURL("image/jpeg", 0.75);
     const now = new Date();
+    const imageBlob = await (await fetch(frameDataUrl)).blob();
 
     uploadScreenshotToSupabase({
-      frameDataUrl,
+      imageBlob,
       takenAt: now.toISOString(),
     }).catch((error) => {
       console.error("Supabase upload failed:", error);
     });
+
+    void sendFrameToAiBackend(imageBlob);
   };
 
   const startCaptureLoop = async () => {
     try {
       stopCaptureLoop();
+      backendSessionIdRef.current = null;
+      setAiSession(null);
+      setAiEvaluations([]);
+      try {
+        localStorage.removeItem(LS_AI_STORE);
+      } catch {
+        /* ignore */
+      }
 
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: true,
@@ -552,6 +696,54 @@ export default function App() {
       <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
       <canvas ref={frameCanvasRef} style={{ display: "none" }} />
 
+      {isStudentRegistered && isCaptureRunning ? (
+        <Paper
+          elevation={3}
+          sx={{
+            position: "fixed",
+            bottom: 16,
+            right: 16,
+            zIndex: 100,
+            maxWidth: 360,
+            p: 2,
+            borderRadius: "16px",
+            bgcolor: "rgba(255,255,255,0.96)",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+            border: "1px solid rgba(26,26,26,0.08)",
+          }}
+        >
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+            AI progress
+          </Typography>
+          {!aiSession ? (
+            <Typography variant="body2">Starting problem session…</Typography>
+          ) : aiEvaluations.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              Session ready — grading begins on the next snapshot (every 3s).
+            </Typography>
+          ) : (
+            (() => {
+              const last = aiEvaluations[aiEvaluations.length - 1];
+              return (
+                <Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                    {last.progressPercent}% · {last.category}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {last.reason}
+                  </Typography>
+                  {last.confusionHighlights?.length ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                      {last.confusionHighlights.join(" · ")}
+                    </Typography>
+                  ) : null}
+                </Box>
+              );
+            })()
+          )}
+        </Paper>
+      ) : null}
+
       <Box
         sx={{
           flex: 1,
@@ -568,12 +760,135 @@ export default function App() {
           <Box
             sx={{
               display: "flex",
-              justifyContent: "flex-end",
-              alignItems: "center",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 2,
               flexShrink: 0,
               mb: 1.5,
             }}
           >
+            <Box
+              sx={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "flex-start",
+                gap: 2,
+                minWidth: 0,
+                flex: 1,
+              }}
+            >
+              <Typography
+                variant="subtitle1"
+                sx={{ fontWeight: 700, flexShrink: 0, pt: 0.5 }}
+              >
+                {student.name}
+              </Typography>
+
+              {aiSession?.sessionId ? (
+                <Paper
+                  variant="outlined"
+                  sx={{
+                    flex: 1,
+                    minWidth: { xs: "100%", sm: 320 },
+                    maxWidth: "100%",
+                    maxHeight: 320,
+                    overflow: "auto",
+                    p: 1.5,
+                    borderRadius: "16px",
+                    bgcolor: "rgba(250,250,250,0.98)",
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: "block", mb: 1 }}
+                  >
+                    GET /api/sessions/{aiSession.sessionId.slice(0, 8)}… · every{" "}
+                    {SESSION_POLL_MS / 1000}s
+                    {sessionPollAt ? ` · last ${sessionPollAt}` : ""}
+                    {sessionPollLoading ? (
+                      <CircularProgress size={14} sx={{ ml: 1, verticalAlign: "middle" }} />
+                    ) : null}
+                  </Typography>
+                  {sessionPollError ? (
+                    <Typography variant="body2" color="error" sx={{ mb: 1 }}>
+                      {sessionPollError}
+                    </Typography>
+                  ) : null}
+                  {sessionFromGet ? (
+                    <Box sx={{ fontFamily: "ui-monospace, monospace", fontSize: 12, lineHeight: 1.5 }}>
+                      <div>
+                        <strong>status</strong> {sessionFromGet.status} · <strong>studentId</strong>{" "}
+                        {sessionFromGet.studentId ?? "—"} · <strong>classId</strong>{" "}
+                        {sessionFromGet.classId ?? "—"}
+                      </div>
+                      <div style={{ marginTop: 4 }}>
+                        <strong>latest</strong> progress {sessionFromGet.latestProgressPercent ?? "—"}
+                        % · category {sessionFromGet.latestCategory ?? "—"} · confidence{" "}
+                        {sessionFromGet.latestConfidenceScore ?? "—"}
+                      </div>
+                      {sessionFromGet.latestReason ? (
+                        <div style={{ marginTop: 6 }}>
+                          <strong>reason</strong> {sessionFromGet.latestReason}
+                        </div>
+                      ) : null}
+                      {sessionFromGet.latestConfusionHighlights?.length ? (
+                        <div style={{ marginTop: 6 }}>
+                          <strong>highlights</strong>{" "}
+                          {sessionFromGet.latestConfusionHighlights.join(" · ")}
+                        </div>
+                      ) : null}
+                      <div style={{ marginTop: 10, fontWeight: 700 }}>
+                        evaluations ({sessionFromGet.evaluations?.length ?? 0})
+                      </div>
+                      {(sessionFromGet.evaluations ?? []).map((ev, i) => (
+                        <Box
+                          key={ev.id ?? i}
+                          sx={{
+                            mt: 1,
+                            p: 1,
+                            borderRadius: 1,
+                            bgcolor: "rgba(0,0,0,0.04)",
+                            border: "1px solid rgba(0,0,0,0.06)",
+                          }}
+                        >
+                          <div>
+                            #{i + 1} · {ev.timestamp}
+                          </div>
+                          {ev.evaluationResult ? (
+                            <>
+                              <div>
+                                progress {ev.evaluationResult.progressPercent}% ·{" "}
+                                {ev.evaluationResult.category} · conf{" "}
+                                {ev.evaluationResult.confidenceScore}
+                              </div>
+                              <div style={{ marginTop: 4 }}>
+                                {ev.evaluationResult.reason}
+                              </div>
+                              {ev.evaluationResult.confusionHighlights?.length ? (
+                                <div style={{ marginTop: 4, opacity: 0.85 }}>
+                                  {ev.evaluationResult.confusionHighlights.join(" · ")}
+                                </div>
+                              ) : null}
+                            </>
+                          ) : null}
+                        </Box>
+                      ))}
+                    </Box>
+                  ) : !sessionPollError ? (
+                    <Typography variant="body2" color="text.secondary">
+                      Loading session snapshot…
+                    </Typography>
+                  ) : null}
+                </Paper>
+              ) : (
+                <Typography variant="body2" color="text.secondary" sx={{ pt: 0.5 }}>
+                  Waiting for AI session…
+                </Typography>
+              )}
+            </Box>
+
             <Button
               variant="contained"
               color="primary"
@@ -584,6 +899,7 @@ export default function App() {
                 px: 3,
                 py: 1.25,
                 fontWeight: 700,
+                flexShrink: 0,
                 bgcolor: isCaptureRunning ? "primary.main" : "rgba(26,26,26,0.12)",
                 color: isCaptureRunning ? "primary.contrastText" : "text.secondary",
                 boxShadow: isCaptureRunning ? "0 4px 20px rgba(0,0,0,0.12)" : "none",
