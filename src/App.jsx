@@ -12,6 +12,7 @@ import EraserIcon from "@mui/icons-material/AutoFixOff";
 import CircleIcon from "@mui/icons-material/Circle";
 import HighlightAltIcon from "@mui/icons-material/HighlightAlt";
 import worksheetImage from "./assets/problem-set.png";
+import { supabase, hasSupabaseConfig } from "./supabaseClient";
 
 const TOOL = {
   DRAW: "draw",
@@ -31,6 +32,9 @@ const SIZE_TO_PX = {
   [SIZE.LARGE]: 18,
 };
 
+const SCREENSHOT_BUCKET = import.meta.env.VITE_SUPABASE_SCREENSHOT_BUCKET || "screenshots";
+const SCREENSHOT_TABLE = "student_snapshots";
+
 export default function App() {
   const drawCanvasRef = useRef(null);
   const highlightCanvasRef = useRef(null);
@@ -48,6 +52,7 @@ export default function App() {
   const [lastFramePreviewUrl, setLastFramePreviewUrl] = useState("");
   const [captureHistory, setCaptureHistory] = useState([]);
   const [captureError, setCaptureError] = useState("");
+  const [uploadStatus, setUploadStatus] = useState("No uploads yet");
 
   useEffect(() => {
     const resizeOne = (canvas) => {
@@ -240,6 +245,47 @@ export default function App() {
     await new Promise((resolve) => setTimeout(resolve, 150));
   };
 
+  const uploadScreenshotToSupabase = async ({ frameDataUrl, takenAt }) => {
+    if (!hasSupabaseConfig) {
+      setUploadStatus("Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to upload.");
+      return;
+    }
+
+    const screenshotId =
+      crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const studentId = localStorage.getItem("studentId") || "student-demo";
+    const classId = localStorage.getItem("classId") || "class-demo";
+    const filePath = `${classId}/${studentId}/${screenshotId}.jpg`;
+
+    const response = await fetch(frameDataUrl);
+    const imageBlob = await response.blob();
+
+    const { error: uploadError } = await supabase.storage
+      .from(SCREENSHOT_BUCKET)
+      .upload(filePath, imageBlob, {
+        contentType: "image/jpeg",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { error: insertError } = await supabase.from(SCREENSHOT_TABLE).insert({
+      id: screenshotId,
+      class_id: classId,
+      student_id: studentId,
+      storage_path: filePath,
+      captured_at: takenAt,
+    });
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    setUploadStatus(`Uploaded ${new Date(takenAt).toLocaleTimeString()}`);
+  };
+
   const captureAndSendFrame = async () => {
     const video = screenVideoRef.current;
     const canvas = frameCanvasRef.current;
@@ -277,6 +323,14 @@ export default function App() {
         frameDataUrl,
       };
       return [nextEntry, ...prev].slice(0, 24);
+    });
+
+    uploadScreenshotToSupabase({
+      frameDataUrl,
+      takenAt: now.toISOString(),
+    }).catch((error) => {
+      console.error("Supabase upload failed:", error);
+      setUploadStatus(`Upload failed: ${error.message}`);
     });
   };
 
@@ -425,6 +479,8 @@ export default function App() {
         <Typography variant="caption">
           Last capture: {lastCaptureAt ?? "N/A"}
         </Typography>
+
+        <Typography variant="caption">Upload: {uploadStatus}</Typography>
 
         <Button
           variant="text"
