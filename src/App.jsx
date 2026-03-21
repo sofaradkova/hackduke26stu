@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Paper,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -35,6 +36,20 @@ const SIZE_TO_PX = {
 const SCREENSHOT_BUCKET = import.meta.env.VITE_SUPABASE_SCREENSHOT_BUCKET || "screenshots";
 const SCREENSHOT_TABLE = "student_snapshots";
 
+/** Shown on worksheet + stored on every snapshot row for the teacher dashboard. */
+const PROBLEM_SET_TITLE = "Simple Linear Equations";
+
+const LS_STUDENT_ID = "studentId";
+const LS_STUDENT_NAME = "studentName";
+
+function readStoredStudent() {
+  if (typeof window === "undefined") return { id: "", name: "" };
+  return {
+    id: localStorage.getItem(LS_STUDENT_ID) ?? "",
+    name: localStorage.getItem(LS_STUDENT_NAME) ?? "",
+  };
+}
+
 export default function App() {
   const drawCanvasRef = useRef(null);
   const highlightCanvasRef = useRef(null);
@@ -53,6 +68,25 @@ export default function App() {
   const [captureHistory, setCaptureHistory] = useState([]);
   const [captureError, setCaptureError] = useState("");
   const [uploadStatus, setUploadStatus] = useState("No uploads yet");
+  const [student, setStudent] = useState(readStoredStudent);
+  const [nameInput, setNameInput] = useState(() => readStoredStudent().name);
+
+  const isStudentRegistered = Boolean(student.id && student.name.trim());
+
+  const registerStudent = () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed) return;
+
+    let id = localStorage.getItem(LS_STUDENT_ID);
+    if (!id) {
+      id = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(LS_STUDENT_ID, id);
+    }
+    localStorage.setItem(LS_STUDENT_NAME, trimmed);
+    setStudent({ id, name: trimmed });
+    // Start capture right after name is saved (browser will prompt for screen share).
+    void startCaptureLoop();
+  };
 
   useEffect(() => {
     const resizeOne = (canvas) => {
@@ -253,8 +287,15 @@ export default function App() {
 
     const screenshotId =
       crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const studentId = localStorage.getItem("studentId") || "student-demo";
+    // Read from localStorage so interval callbacks always see current identity (no stale closure).
+    const studentId = localStorage.getItem(LS_STUDENT_ID) || student.id;
+    const studentName = (localStorage.getItem(LS_STUDENT_NAME) || student.name || "").trim();
     const classId = localStorage.getItem("classId") || "class-demo";
+
+    if (!studentId || !studentName) {
+      setUploadStatus("Set your name first (student ID is created automatically).");
+      return;
+    }
     const filePath = `${classId}/${studentId}/${screenshotId}.jpg`;
 
     const response = await fetch(frameDataUrl);
@@ -275,6 +316,8 @@ export default function App() {
       id: screenshotId,
       class_id: classId,
       student_id: studentId,
+      name: studentName,
+      problem_set_title: PROBLEM_SET_TITLE,
       storage_path: filePath,
       captured_at: takenAt,
     });
@@ -374,7 +417,63 @@ export default function App() {
   }, []);
 
   return (
-    <Box sx={{ height: "100vh", bgcolor: "#f3f4f6", p: 0 }}>
+    <Box sx={{ height: "100vh", bgcolor: "#f3f4f6", p: 0, position: "relative" }}>
+      {!isStudentRegistered ? (
+        <Box
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="student-name-dialog-title"
+          sx={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 2000,
+            bgcolor: "rgba(15, 23, 42, 0.72)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            px: 2,
+          }}
+        >
+          <Paper
+            elevation={12}
+            sx={{
+              p: 3,
+              maxWidth: 420,
+              width: "100%",
+              borderRadius: 2,
+            }}
+          >
+            <Typography id="student-name-dialog-title" variant="h6" component="h2" gutterBottom>
+              Welcome
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Enter your name. A student ID will be created and saved on this device.
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              label="Your name"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") registerStudent();
+              }}
+              sx={{ mb: 2 }}
+            />
+            <Button
+              variant="contained"
+              fullWidth
+              size="large"
+              onClick={registerStudent}
+              disabled={!nameInput.trim()}
+            >
+              Continue
+            </Button>
+          </Paper>
+        </Box>
+      ) : null}
+
       <Box
         sx={{
           position: "fixed",
@@ -450,13 +549,27 @@ export default function App() {
           Screen Capture to Gemini (Simulated)
         </Typography>
 
+        {isStudentRegistered ? (
+          <Box sx={{ mb: 0.5 }}>
+            <Typography variant="caption" sx={{ color: "#e2e8f0", display: "block" }}>
+              Student: <strong>{student.name}</strong>
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{ color: "#94a3b8", fontFamily: "monospace", fontSize: 10, wordBreak: "break-all" }}
+            >
+              ID: {student.id}
+            </Typography>
+          </Box>
+        ) : null}
+
         <Box sx={{ display: "flex", gap: 1 }}>
           <Button
             variant="contained"
             color="success"
             size="small"
             onClick={startCaptureLoop}
-            disabled={isCaptureRunning}
+            disabled={isCaptureRunning || !isStudentRegistered}
           >
             Start 3s Capture
           </Button>
