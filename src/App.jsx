@@ -3,6 +3,7 @@ import { Box, Paper, ToggleButton, ToggleButtonGroup } from "@mui/material";
 import BrushIcon from "@mui/icons-material/Brush";
 import EraserIcon from "@mui/icons-material/AutoFixOff";
 import CircleIcon from "@mui/icons-material/Circle";
+import worksheetImage from "./assets/problem-set.png";
 
 const TOOL = {
   DRAW: "draw",
@@ -37,8 +38,7 @@ export default function App() {
       canvas.width = Math.floor(width * dpr);
       canvas.height = Math.floor(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, width, height);
+      ctx.clearRect(0, 0, width, height);
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
     };
@@ -102,10 +102,22 @@ export default function App() {
 
   return (
     <Box sx={{ height: "100vh", bgcolor: "#f3f4f6", p: 0 }}>
-      <Box sx={{ position: "fixed", top: 12, left: 12, zIndex: 10, display: "flex", gap: 1.5 }}>
+      <Box
+        sx={{
+          position: "fixed",
+          top: "50%",
+          left: 12,
+          transform: "translateY(-50%)",
+          zIndex: 10,
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+        }}
+      >
         <ToggleButtonGroup
           color="primary"
           exclusive
+          orientation="vertical"
           value={tool}
           onChange={(_, nextTool) => {
             if (nextTool) setTool(nextTool);
@@ -123,6 +135,7 @@ export default function App() {
         <ToggleButtonGroup
           color="primary"
           exclusive
+          orientation="vertical"
           value={size}
           onChange={(_, nextSize) => {
             if (nextSize) setSize(nextSize);
@@ -142,7 +155,18 @@ export default function App() {
 
       </Box>
 
-      <Paper elevation={0} sx={{ width: "100%", height: "100%", bgcolor: "#ffffff" }}>
+      <Paper
+        elevation={0}
+        sx={{
+          width: "100%",
+          height: "100%",
+          bgcolor: "#ffffff",
+          backgroundImage: `url(${worksheetImage})`,
+          backgroundRepeat: "no-repeat",
+          backgroundPosition: "center",
+          backgroundSize: "contain",
+        }}
+      >
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
@@ -154,7 +178,7 @@ export default function App() {
             height: "100%",
             display: "block",
             touchAction: "none",
-            background: "#ffffff",
+            background: "transparent",
             cursor: tool === TOOL.ERASE ? "cell" : "crosshair",
           }}
         />
