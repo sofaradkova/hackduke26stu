@@ -3,10 +3,12 @@ import { Box, Paper, ToggleButton, ToggleButtonGroup } from "@mui/material";
 import BrushIcon from "@mui/icons-material/Brush";
 import EraserIcon from "@mui/icons-material/AutoFixOff";
 import CircleIcon from "@mui/icons-material/Circle";
+import HighlightAltIcon from "@mui/icons-material/HighlightAlt";
 import worksheetImage from "./assets/problem-set.png";
 
 const TOOL = {
   DRAW: "draw",
+  HIGHLIGHT: "highlight",
   ERASE: "erase",
 };
 
@@ -23,59 +25,131 @@ const SIZE_TO_PX = {
 };
 
 export default function App() {
-  const canvasRef = useRef(null);
+  const drawCanvasRef = useRef(null);
+  const highlightCanvasRef = useRef(null);
   const drawingRef = useRef(false);
+  const lastPointRef = useRef(null);
+
   const [tool, setTool] = useState(TOOL.DRAW);
   const [size, setSize] = useState(SIZE.MEDIUM);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
+    const resizeOne = (canvas) => {
+      if (!canvas) return;
 
-    const resizeCanvas = () => {
+      const ctx = canvas.getContext("2d");
       const { width, height } = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
+
       canvas.width = Math.floor(width * dpr);
       canvas.height = Math.floor(height * dpr);
+
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, width, height);
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
     };
 
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
-    return () => window.removeEventListener("resize", resizeCanvas);
+    const resizeAll = () => {
+      resizeOne(drawCanvasRef.current);
+      resizeOne(highlightCanvasRef.current);
+    };
+
+    resizeAll();
+    window.addEventListener("resize", resizeAll);
+    return () => window.removeEventListener("resize", resizeAll);
   }, []);
 
-  const setBrushForTool = (ctx) => {
-    const selectedSize = SIZE_TO_PX[size];
-
-    if (tool === TOOL.DRAW) {
-      ctx.globalCompositeOperation = "source-over";
-      ctx.strokeStyle = "#111111";
-      ctx.lineWidth = selectedSize;
-      return;
-    }
-
-    ctx.globalCompositeOperation = "destination-out";
-    ctx.lineWidth = selectedSize;
+  const getActiveCanvas = () => {
+    if (tool === TOOL.HIGHLIGHT) return highlightCanvasRef.current;
+    return drawCanvasRef.current;
   };
 
-  const getPos = (event) => {
-    const rect = canvasRef.current.getBoundingClientRect();
+  const getPos = (event, canvas) => {
+    const rect = canvas.getBoundingClientRect();
     return {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
   };
 
+  const setBrushForTool = (ctx) => {
+    const selectedSize = SIZE_TO_PX[size];
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    if (tool === TOOL.DRAW) {
+      ctx.strokeStyle = "#111111";
+      ctx.lineWidth = selectedSize;
+      return;
+    }
+
+    if (tool === TOOL.HIGHLIGHT) {
+      ctx.strokeStyle = "#ffeb3b";
+      ctx.lineWidth = selectedSize * 2.5;
+    }
+  };
+
+  const eraseStroke = (from, to) => {
+    const selectedSize = SIZE_TO_PX[size] * 2;
+
+    [drawCanvasRef.current, highlightCanvasRef.current].forEach((canvas) => {
+      if (!canvas) return;
+
+      const ctx = canvas.getContext("2d");
+
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = selectedSize;
+
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+
+      ctx.restore();
+    });
+  };
+
+  const eraseDot = (point) => {
+    const radius = SIZE_TO_PX[size];
+
+    [drawCanvasRef.current, highlightCanvasRef.current].forEach((canvas) => {
+      if (!canvas) return;
+
+      const ctx = canvas.getContext("2d");
+
+      ctx.save();
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    });
+  };
+
   const handlePointerDown = (event) => {
-    const canvas = canvasRef.current;
+    if (tool === TOOL.ERASE) {
+      const canvas = drawCanvasRef.current;
+      const point = getPos(event, canvas);
+
+      drawingRef.current = true;
+      lastPointRef.current = point;
+      canvas?.setPointerCapture(event.pointerId);
+      eraseDot(point);
+      return;
+    }
+
+    const canvas = getActiveCanvas();
     const ctx = canvas.getContext("2d");
-    const { x, y } = getPos(event);
+    const { x, y } = getPos(event, canvas);
 
     drawingRef.current = true;
+    lastPointRef.current = { x, y };
     canvas.setPointerCapture(event.pointerId);
     setBrushForTool(ctx);
     ctx.beginPath();
@@ -85,19 +159,39 @@ export default function App() {
   const handlePointerMove = (event) => {
     if (!drawingRef.current) return;
 
-    const canvas = canvasRef.current;
+    if (tool === TOOL.ERASE) {
+      const canvas = drawCanvasRef.current;
+      const nextPoint = getPos(event, canvas);
+      const prevPoint = lastPointRef.current ?? nextPoint;
+
+      eraseStroke(prevPoint, nextPoint);
+      lastPointRef.current = nextPoint;
+      return;
+    }
+
+    const canvas = getActiveCanvas();
     const ctx = canvas.getContext("2d");
-    const { x, y } = getPos(event);
+    const { x, y } = getPos(event, canvas);
 
     setBrushForTool(ctx);
     ctx.lineTo(x, y);
     ctx.stroke();
+    lastPointRef.current = { x, y };
   };
 
   const handlePointerUp = (event) => {
     if (!drawingRef.current) return;
+
     drawingRef.current = false;
-    canvasRef.current.releasePointerCapture(event.pointerId);
+    lastPointRef.current = null;
+
+    if (tool === TOOL.ERASE) {
+      drawCanvasRef.current?.releasePointerCapture(event.pointerId);
+      return;
+    }
+
+    const canvas = getActiveCanvas();
+    canvas.releasePointerCapture(event.pointerId);
   };
 
   return (
@@ -127,6 +221,9 @@ export default function App() {
           <ToggleButton value={TOOL.DRAW} aria-label="Draw">
             <BrushIcon />
           </ToggleButton>
+          <ToggleButton value={TOOL.HIGHLIGHT} aria-label="Highlight">
+            <HighlightAltIcon />
+          </ToggleButton>
           <ToggleButton value={TOOL.ERASE} aria-label="Erase">
             <EraserIcon />
           </ToggleButton>
@@ -152,7 +249,6 @@ export default function App() {
             <CircleIcon sx={{ fontSize: 24 }} />
           </ToggleButton>
         </ToggleButtonGroup>
-
       </Box>
 
       <Paper
@@ -165,20 +261,45 @@ export default function App() {
           backgroundRepeat: "no-repeat",
           backgroundPosition: "center",
           backgroundSize: "contain",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
         <canvas
-          ref={canvasRef}
+          ref={highlightCanvasRef}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
           style={{
+            position: "absolute",
+            inset: 0,
             width: "100%",
             height: "100%",
             display: "block",
             touchAction: "none",
             background: "transparent",
+            opacity: 0.28,
+            pointerEvents: tool === TOOL.HIGHLIGHT ? "auto" : "none",
+            cursor: tool === TOOL.HIGHLIGHT ? "crosshair" : "default",
+          }}
+        />
+
+        <canvas
+          ref={drawCanvasRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            display: "block",
+            touchAction: "none",
+            background: "transparent",
+            pointerEvents: tool !== TOOL.HIGHLIGHT ? "auto" : "none",
             cursor: tool === TOOL.ERASE ? "cell" : "crosshair",
           }}
         />
