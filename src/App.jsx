@@ -42,12 +42,11 @@ const PROBLEM_SET_TITLE = "Simple Linear Equations";
 const LS_STUDENT_ID = "studentId";
 const LS_STUDENT_NAME = "studentName";
 
-function readStoredStudent() {
-  if (typeof window === "undefined") return { id: "", name: "" };
-  return {
-    id: localStorage.getItem(LS_STUDENT_ID) ?? "",
-    name: localStorage.getItem(LS_STUDENT_NAME) ?? "",
-  };
+/** Clear persisted student identity on each full page load so reload = new session + name prompt. */
+function clearStoredStudentSession() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(LS_STUDENT_ID);
+  localStorage.removeItem(LS_STUDENT_NAME);
 }
 
 export default function App() {
@@ -68,24 +67,33 @@ export default function App() {
   const [captureHistory, setCaptureHistory] = useState([]);
   const [captureError, setCaptureError] = useState("");
   const [uploadStatus, setUploadStatus] = useState("No uploads yet");
-  const [student, setStudent] = useState(readStoredStudent);
-  const [nameInput, setNameInput] = useState(() => readStoredStudent().name);
+  const [student, setStudent] = useState({ id: "", name: "" });
+  const [nameInput, setNameInput] = useState("");
+  const [wellDoneVisible, setWellDoneVisible] = useState(false);
 
   const isStudentRegistered = Boolean(student.id && student.name.trim());
+
+  useEffect(() => {
+    clearStoredStudentSession();
+  }, []);
 
   const registerStudent = () => {
     const trimmed = nameInput.trim();
     if (!trimmed) return;
 
-    let id = localStorage.getItem(LS_STUDENT_ID);
-    if (!id) {
-      id = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      localStorage.setItem(LS_STUDENT_ID, id);
-    }
+    const id = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(LS_STUDENT_ID, id);
     localStorage.setItem(LS_STUDENT_NAME, trimmed);
     setStudent({ id, name: trimmed });
+    setWellDoneVisible(false);
     // Start capture right after name is saved (browser will prompt for screen share).
     void startCaptureLoop();
+  };
+
+  const handleDoneClick = () => {
+    if (!isCaptureRunning) return;
+    stopCaptureLoop();
+    setWellDoneVisible(true);
   };
 
   useEffect(() => {
@@ -474,6 +482,29 @@ export default function App() {
         </Box>
       ) : null}
 
+      {isStudentRegistered ? (
+        <Box
+          sx={{
+            position: "fixed",
+            top: "max(12px, env(safe-area-inset-top, 0px))",
+            left: "max(12px, env(safe-area-inset-left, 0px))",
+            zIndex: 2100,
+            pointerEvents: "auto",
+          }}
+        >
+          <Button
+            variant="contained"
+            color="primary"
+            size="medium"
+            onClick={handleDoneClick}
+            disabled={!isCaptureRunning}
+            sx={{ boxShadow: 3, fontWeight: 700 }}
+          >
+            Done
+          </Button>
+        </Box>
+      ) : null}
+
       <Box
         sx={{
           position: "fixed",
@@ -573,15 +604,6 @@ export default function App() {
           >
             Start 3s Capture
           </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={stopCaptureLoop}
-            disabled={!isCaptureRunning}
-            sx={{ borderColor: "#ffffff55", color: "#ffffff" }}
-          >
-            Stop
-          </Button>
         </Box>
 
         <Typography variant="caption">
@@ -610,64 +632,76 @@ export default function App() {
           </Typography>
         ) : null}
 
-        {lastFramePreviewUrl ? (
-          <Box
-            component="img"
-            src={lastFramePreviewUrl}
-            alt="latest screen capture preview"
-            sx={{
-              width: "100%",
-              borderRadius: 1,
-              border: "1px solid #ffffff33",
-              objectFit: "cover",
-              maxHeight: 180,
-              bgcolor: "#000000",
-            }}
-          />
-        ) : null}
+        <Box
+          sx={{
+            mt: 0.5,
+            pt: 1,
+            borderTop: "1px solid #ffffff22",
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+          }}
+        >
+          <Typography variant="caption" sx={{ color: "#94a3b8" }}>
+            Screenshots
+          </Typography>
 
-        {captureHistory.length ? (
-          <Box
-            sx={{
-              mt: 0.5,
-              maxHeight: 190,
-              overflowY: "auto",
-              borderTop: "1px solid #ffffff22",
-              pt: 1,
-              display: "grid",
-              gap: 0.75,
-            }}
-          >
-            {captureHistory.map((entry) => (
-              <Box
-                key={entry.id}
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: "90px 1fr",
-                  gap: 1,
-                  alignItems: "center",
-                }}
-              >
+          {lastFramePreviewUrl ? (
+            <Box
+              component="img"
+              src={lastFramePreviewUrl}
+              alt="latest screen capture preview"
+              sx={{
+                width: "100%",
+                borderRadius: 1,
+                border: "1px solid #ffffff33",
+                objectFit: "cover",
+                maxHeight: 180,
+                bgcolor: "#000000",
+              }}
+            />
+          ) : null}
+
+          {captureHistory.length ? (
+            <Box
+              sx={{
+                maxHeight: 190,
+                overflowY: "auto",
+                display: "grid",
+                gap: 0.75,
+              }}
+            >
+              {captureHistory.map((entry) => (
                 <Box
-                  component="img"
-                  src={entry.frameDataUrl}
-                  alt={`captured ${entry.capturedAt}`}
+                  key={entry.id}
                   sx={{
-                    width: 90,
-                    height: 54,
-                    borderRadius: 0.75,
-                    objectFit: "cover",
-                    border: "1px solid #ffffff2e",
-                    bgcolor: "#000000",
+                    display: "grid",
+                    gridTemplateColumns: "90px 1fr",
+                    gap: 1,
+                    alignItems: "center",
                   }}
-                />
-                <Typography variant="caption" sx={{ color: "#d1d5db" }}>
-                  Captured at {entry.capturedAt}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
-        ) : null}
+                >
+                  <Box
+                    component="img"
+                    src={entry.frameDataUrl}
+                    alt={`captured ${entry.capturedAt}`}
+                    sx={{
+                      width: 90,
+                      height: 54,
+                      borderRadius: 0.75,
+                      objectFit: "cover",
+                      border: "1px solid #ffffff2e",
+                      bgcolor: "#000000",
+                    }}
+                  />
+                  <Typography variant="caption" sx={{ color: "#d1d5db" }}>
+                    Captured at {entry.capturedAt}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
+        </Box>
       </Box>
 
       <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
@@ -702,7 +736,8 @@ export default function App() {
             touchAction: "none",
             background: "transparent",
             opacity: 0.28,
-            pointerEvents: tool === TOOL.HIGHLIGHT ? "auto" : "none",
+            pointerEvents:
+              wellDoneVisible ? "none" : tool === TOOL.HIGHLIGHT ? "auto" : "none",
             cursor: tool === TOOL.HIGHLIGHT ? "crosshair" : "default",
           }}
         />
@@ -721,10 +756,43 @@ export default function App() {
             display: "block",
             touchAction: "none",
             background: "transparent",
-            pointerEvents: tool !== TOOL.HIGHLIGHT ? "auto" : "none",
+            pointerEvents:
+              wellDoneVisible ? "none" : tool !== TOOL.HIGHLIGHT ? "auto" : "none",
             cursor: tool === TOOL.ERASE ? "cell" : "crosshair",
           }}
         />
+
+        {wellDoneVisible ? (
+          <Box
+            role="status"
+            aria-live="polite"
+            sx={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 20,
+              bgcolor: "rgba(15, 23, 42, 0.55)",
+              backdropFilter: "blur(2px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "auto",
+            }}
+          >
+            <Typography
+              variant="h3"
+              component="p"
+              sx={{
+                color: "#ffffff",
+                fontWeight: 700,
+                textAlign: "center",
+                px: 2,
+                textShadow: "0 2px 12px rgba(0,0,0,0.35)",
+              }}
+            >
+              Well done!
+            </Typography>
+          </Box>
+        ) : null}
       </Paper>
     </Box>
   );
