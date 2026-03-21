@@ -66,6 +66,39 @@ function clearStoredStudentSession() {
   localStorage.removeItem(LS_STUDENT_NAME);
 }
 
+const togglePillSx = {
+  borderRadius: "32px",
+  p: 1,
+  gap: 0.75,
+  flexDirection: "column",
+  border: "none",
+  bgcolor: "rgba(255,255,255,0.92)",
+  boxShadow: "0 8px 32px rgba(0,0,0,0.06)",
+  "& .MuiToggleButtonGroup-grouped": {
+    border: 0,
+    borderRadius: "50% !important",
+    mx: "auto",
+  },
+};
+
+const toggleBtnSx = {
+  width: 48,
+  height: 48,
+  minWidth: 48,
+  color: "text.secondary",
+  border: "none",
+  "&:hover": {
+    bgcolor: "rgba(26,26,26,0.06)",
+  },
+  "&.Mui-selected": {
+    bgcolor: "#1a1a1a",
+    color: "#fff",
+    "&:hover": {
+      bgcolor: "#2d2d2d",
+    },
+  },
+};
+
 export default function App() {
   const drawCanvasRef = useRef(null);
   const highlightCanvasRef = useRef(null);
@@ -670,7 +703,17 @@ Common Errors to Check:
   }, []);
 
   return (
-    <Box sx={{ height: "100vh", bgcolor: "#f3f4f6", p: 0, position: "relative" }}>
+    <Box
+      sx={{
+        height: "100vh",
+        bgcolor: "background.default",
+        p: 0,
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
       {!isStudentRegistered ? (
         <Box
           role="dialog"
@@ -680,8 +723,9 @@ Common Errors to Check:
             position: "fixed",
             inset: 0,
             zIndex: 2000,
-            bgcolor: "rgba(15, 23, 42, 0.72)",
-            backdropFilter: "blur(4px)",
+            bgcolor: "rgba(0, 0, 0, 0.38)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -689,16 +733,27 @@ Common Errors to Check:
           }}
         >
           <Paper
-            elevation={12}
+            elevation={0}
             sx={{
-              p: 3,
-              maxWidth: 420,
+              p: { xs: 3, sm: 4 },
+              maxWidth: 440,
               width: "100%",
-              borderRadius: 2,
+              borderRadius: "28px",
+              bgcolor: "background.paper",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.1)",
+              border: "1px solid rgba(26,26,26,0.06)",
             }}
           >
-            <Typography id="student-name-dialog-title" variant="h6" component="h2" sx={{ mb: 2 }} gutterBottom>
-              Welcome!
+            <Typography
+              id="student-name-dialog-title"
+              variant="h5"
+              component="h2"
+              sx={{ mb: 0.5, color: "text.primary" }}
+            >
+              Welcome
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              Enter your name to start.
             </Typography>
             <TextField
               autoFocus
@@ -709,14 +764,25 @@ Common Errors to Check:
               onKeyDown={(e) => {
                 if (e.key === "Enter") registerStudent();
               }}
-              sx={{ mb: 2 }}
+              sx={{
+                mb: 3,
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: "18px",
+                },
+              }}
             />
             <Button
               variant="contained"
+              color="primary"
               fullWidth
               size="large"
               onClick={registerStudent}
               disabled={!nameInput.trim()}
+              sx={{
+                py: 1.5,
+                fontSize: "1rem",
+                opacity: nameInput.trim() ? 1 : 0.55,
+              }}
             >
               Continue
             </Button>
@@ -724,79 +790,54 @@ Common Errors to Check:
         </Box>
       ) : null}
 
-      {isStudentRegistered ? (
-        <Box
-          sx={{
-            position: "fixed",
-            top: "max(12px, env(safe-area-inset-top, 0px))",
-            left: "max(12px, env(safe-area-inset-left, 0px))",
-            zIndex: 2100,
-            pointerEvents: "auto",
-          }}
-        >
-          <Button
-            variant="contained"
-            color="primary"
-            size="medium"
-            onClick={handleDoneClick}
-            disabled={!isCaptureRunning}
-            sx={{ boxShadow: 3, fontWeight: 700 }}
-          >
-            Done
-          </Button>
-        </Box>
-      ) : null}
-
       <Box
         sx={{
           position: "fixed",
           top: "50%",
-          left: 12,
+          left: 20,
           transform: "translateY(-50%)",
           zIndex: 10,
           display: "flex",
           flexDirection: "column",
-          gap: 1.5,
+          gap: 2,
         }}
       >
         <ToggleButtonGroup
-          color="primary"
           exclusive
           orientation="vertical"
           value={tool}
           onChange={(_, nextTool) => {
             if (nextTool) setTool(nextTool);
           }}
-          sx={{ bgcolor: "#ffffff" }}
+          sx={togglePillSx}
         >
-          <ToggleButton value={TOOL.DRAW} aria-label="Draw">
-            <BrushIcon />
+          <ToggleButton value={TOOL.DRAW} aria-label="Draw" sx={toggleBtnSx}>
+            <BrushIcon fontSize="small" />
           </ToggleButton>
-          <ToggleButton value={TOOL.HIGHLIGHT} aria-label="Highlight">
-            <HighlightAltIcon />
+          <ToggleButton value={TOOL.HIGHLIGHT} aria-label="Highlight" sx={toggleBtnSx}>
+            <HighlightAltIcon fontSize="small" />
           </ToggleButton>
-          <ToggleButton value={TOOL.ERASE} aria-label="Erase">
-            <EraserIcon />
+          <ToggleButton value={TOOL.ERASE} aria-label="Erase" sx={toggleBtnSx}>
+            <EraserIcon fontSize="small" />
           </ToggleButton>
         </ToggleButtonGroup>
 
         <ToggleButtonGroup
-          color="primary"
           exclusive
           orientation="vertical"
           value={size}
           onChange={(_, nextSize) => {
             if (nextSize) setSize(nextSize);
           }}
-          sx={{ bgcolor: "#ffffff" }}
+          sx={togglePillSx}
         >
-          <ToggleButton value={SIZE.SMALL} aria-label="Small size">
+          <ToggleButton value={SIZE.SMALL} aria-label="Small size" sx={toggleBtnSx}>
             <CircleIcon sx={{ fontSize: 12 }} />
           </ToggleButton>
-          <ToggleButton value={SIZE.MEDIUM} aria-label="Medium size">
+          <ToggleButton value={SIZE.MEDIUM} aria-label="Medium size" sx={toggleBtnSx}>
             <CircleIcon sx={{ fontSize: 18 }} />
           </ToggleButton>
-          <ToggleButton value={SIZE.LARGE} aria-label="Large size">
+          <ToggleButton value={SIZE.LARGE} aria-label="Large size" sx={toggleBtnSx}>
             <CircleIcon sx={{ fontSize: 24 }} />
           </ToggleButton>
         </ToggleButtonGroup>
@@ -805,20 +846,70 @@ Common Errors to Check:
       <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
       <canvas ref={frameCanvasRef} style={{ display: "none" }} />
 
-      <Paper
-        elevation={0}
+      <Box
         sx={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
           width: "100%",
-          height: "100%",
-          bgcolor: "#ffffff",
-          backgroundImage: `url(${worksheetImage})`,
-          backgroundRepeat: "no-repeat",
-          backgroundPosition: "center",
-          backgroundSize: "contain",
-          position: "relative",
-          overflow: "hidden",
+          p: { xs: 1.5, sm: 2.5 },
+          pl: { xs: 10, sm: 12 },
+          boxSizing: "border-box",
         }}
       >
+        {isStudentRegistered ? (
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "flex-end",
+              alignItems: "center",
+              flexShrink: 0,
+              mb: 1.5,
+            }}
+          >
+            <Button
+              variant="contained"
+              color="primary"
+              size="large"
+              onClick={handleDoneClick}
+              disabled={!isCaptureRunning}
+              sx={{
+                px: 3,
+                py: 1.25,
+                fontWeight: 700,
+                bgcolor: isCaptureRunning ? "primary.main" : "rgba(26,26,26,0.12)",
+                color: isCaptureRunning ? "primary.contrastText" : "text.secondary",
+                boxShadow: isCaptureRunning ? "0 4px 20px rgba(0,0,0,0.12)" : "none",
+                "&.Mui-disabled": {
+                  bgcolor: "rgba(26,26,26,0.08)",
+                  color: "text.disabled",
+                },
+              }}
+            >
+              Done
+            </Button>
+          </Box>
+        ) : null}
+
+        <Paper
+          elevation={0}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            bgcolor: "#ffffff",
+            backgroundImage: `url(${worksheetImage})`,
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "center",
+            backgroundSize: "contain",
+            position: "relative",
+            overflow: "hidden",
+            borderRadius: "28px",
+            boxShadow: "0 4px 40px rgba(0,0,0,0.06)",
+            border: "1px solid rgba(26,26,26,0.06)",
+          }}
+        >
         <canvas
           ref={highlightCanvasRef}
           onPointerDown={handlePointerDown}
@@ -868,12 +959,16 @@ Common Errors to Check:
               position: "absolute",
               inset: 0,
               zIndex: 20,
-              bgcolor: "rgba(15, 23, 42, 0.55)",
-              backdropFilter: "blur(2px)",
+              bgcolor: "rgba(0, 0, 0, 0.42)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
               pointerEvents: "auto",
+              p: 3,
+              textAlign: "center",
             }}
           >
             <Typography
@@ -882,12 +977,21 @@ Common Errors to Check:
               sx={{
                 color: "#ffffff",
                 fontWeight: 700,
-                textAlign: "center",
-                px: 2,
-                textShadow: "0 2px 12px rgba(0,0,0,0.35)",
+                letterSpacing: "-0.03em",
+                textShadow: "0 2px 24px rgba(0,0,0,0.25)",
               }}
             >
               Well done!
+            </Typography>
+            <Typography
+              variant="body1"
+              sx={{
+                mt: 1.5,
+                color: "rgba(255,255,255,0.88)",
+                maxWidth: 360,
+              }}
+            >
+              Great work on this problem set.
             </Typography>
           </Box>
         ) : null}
