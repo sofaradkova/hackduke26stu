@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
-import { createSessionResponseSchema } from "../schemas/api.js";
+import {
+  createSessionResponseSchema,
+  screenshotEvalResponseSchema,
+} from "../schemas/api.js";
 import type { SessionStore } from "../services/session/sessionStore.js";
 import type { ProblemSolverService } from "../services/ai/problemSolver.js";
 import type { ProgressEvaluatorService } from "../services/ai/progressEvaluator.js";
@@ -73,10 +76,11 @@ function sessionToDetail(sessionId: string, store: SessionStore) {
     updatedAt: session.updatedAt.toISOString(),
     status: session.status,
     sourceOfTruth: session.sourceOfTruth,
-    latestScore: session.latestScore,
-    latestHint: session.latestHint,
-    latestMisconception: session.latestMisconception,
-    latestStepId: session.latestStepId,
+    latestProgressPercent: session.latestProgressPercent,
+    latestReason: session.latestReason,
+    latestCategory: session.latestCategory,
+    latestConfidenceScore: session.latestConfidenceScore,
+    latestConfusionHighlights: session.latestConfusionHighlights,
     evaluations,
   };
 }
@@ -213,14 +217,8 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesDeps> = async (
       evaluationResult,
     });
 
-    return reply.send({
-      score: evaluationResult.score,
-      hint: evaluationResult.hint,
-      isStuck: evaluationResult.isStuck,
-      misconception: evaluationResult.misconception,
-      currentStepId: evaluationResult.currentStepId,
-      workSummary: evaluationResult.workSummary,
-    });
+    const body = screenshotEvalResponseSchema.parse(evaluationResult);
+    return reply.send(body);
   });
 
   app.get("/:sessionId/evaluations", async (request, reply) => {

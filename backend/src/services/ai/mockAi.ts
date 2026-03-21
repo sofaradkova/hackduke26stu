@@ -1,6 +1,10 @@
-import type { EvaluationResult, SourceOfTruth } from "../../schemas/ai.js";
+import type {
+  EvaluationCategory,
+  EvaluationResult,
+  SourceOfTruth,
+} from "../../schemas/ai.js";
 
-/** Deterministic mock source of truth for demos without Gemini. */
+/** Deterministic mock source of truth for demos without OpenAI. */
 export function mockSourceOfTruth(): SourceOfTruth {
   return {
     problemType: "algebra",
@@ -31,35 +35,40 @@ export function mockSourceOfTruth(): SourceOfTruth {
 }
 
 /**
- * Mock evaluator: score rises slightly with each call so demos show progression.
+ * Mock evaluator: progressPercent rises with each call so demos show progression.
  */
 export function mockEvaluationResult(evaluationIndex: number): EvaluationResult {
-  const base = Math.min(3 + evaluationIndex * 2, 10);
-  const score = base;
-  const stepId = score < 5 ? "s1" : score < 10 ? "s2" : "s2";
-  const stuck = score === 3 && evaluationIndex === 0;
+  const progressPercent = Math.min(25 + evaluationIndex * 35, 100);
+  const categories: EvaluationCategory[] = [
+    "unsure",
+    "calc-error",
+    "stuck",
+    "wrong-approach",
+    "off-topic",
+  ];
+  const category = categories[evaluationIndex % categories.length]!;
+
+  const reasons = [
+    "Handwriting is partly legible; student started isolating x but arithmetic on the constant is unclear.",
+    "The linear structure matches the problem, but one operation on the constant term looks inconsistent.",
+    "Little forward movement between this shot and the expected next step—same scratch work repeated.",
+  ];
+  const reason =
+    reasons[Math.min(evaluationIndex, reasons.length - 1)] ??
+    "Work is converging toward the expected solution path.";
+
+  const confusionHighlights =
+    evaluationIndex === 0
+      ? ["constant term move", "sign on subtraction"]
+      : evaluationIndex === 1
+        ? ["line 2: 2x = ?", "check both sides"]
+        : ["stuck repeating prior step"];
 
   return {
-    currentStepId: stepId,
-    workSummary:
-      evaluationIndex === 0
-        ? "Started isolating the variable; check both sides stay balanced."
-        : evaluationIndex === 1
-          ? "Closer: linear structure looks right; verify arithmetic on the constant term."
-          : "Work aligns with the expected solution path.",
-    subscores: {
-      correctness: Math.min(score, 9),
-      progress: Math.min(score + 1, 10),
-      alignment: Math.max(score - 1, 0),
-      confidence: 7,
-    },
-    score,
-    isStuck: stuck,
-    misconception: stuck ? "unbalanced_subtraction" : null,
-    hint: stuck
-      ? "Whatever you do to one side of the equation, do the same to the other."
-      : score < 7
-        ? "Double-check the operation you used to move the constant term."
-        : "Nice progress—simplify and state the final value for x.",
+    progressPercent,
+    reason,
+    category,
+    confidenceScore: evaluationIndex === 0 ? 0.55 : 0.72,
+    confusionHighlights,
   };
 }

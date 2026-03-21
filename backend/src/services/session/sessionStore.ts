@@ -3,8 +3,8 @@ import type { EvaluationResult, SourceOfTruth } from "../../schemas/ai.js";
 import type { ProblemSession, ScreenshotEvaluation } from "../../types/session.js";
 
 function deriveStatusFromEvaluation(result: EvaluationResult): ProblemSession["status"] {
-  if (result.isStuck) return "stuck";
-  if (result.score >= 10) return "complete";
+  if (result.progressPercent >= 100) return "complete";
+  if (result.category === "stuck") return "stuck";
   return "active";
 }
 
@@ -30,10 +30,11 @@ export class SessionStore {
       updatedAt: now,
       initialScreenshotPath: input.initialScreenshotPath,
       sourceOfTruth: input.sourceOfTruth,
-      latestScore: null,
-      latestHint: null,
-      latestMisconception: null,
-      latestStepId: null,
+      latestProgressPercent: null,
+      latestReason: null,
+      latestCategory: null,
+      latestConfidenceScore: null,
+      latestConfusionHighlights: null,
       status: "active",
     };
     this.sessions.set(id, session);
@@ -79,10 +80,11 @@ export class SessionStore {
     this.evaluations.set(input.sessionId, list);
 
     const ev = input.evaluationResult;
-    session.latestScore = ev.score;
-    session.latestHint = ev.hint;
-    session.latestMisconception = ev.misconception;
-    session.latestStepId = ev.currentStepId;
+    session.latestProgressPercent = ev.progressPercent;
+    session.latestReason = ev.reason;
+    session.latestCategory = ev.category;
+    session.latestConfidenceScore = ev.confidenceScore;
+    session.latestConfusionHighlights = ev.confusionHighlights;
     session.status = deriveStatusFromEvaluation(ev);
     session.updatedAt = new Date();
     this.sessions.set(input.sessionId, session);

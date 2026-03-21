@@ -14,7 +14,7 @@ export const hintPolicySchema = z.object({
   doNotRevealFinalAnswerEarly: z.boolean(),
 });
 
-/** Full structured output from ProblemSolverService / Gemini solver. */
+/** Full structured output from ProblemSolverService / OpenAI solver. */
 export const sourceOfTruthSchema = z.object({
   problemType: z.enum(["algebra", "geometry", "calculus", "other"]),
   problemText: z.string(),
@@ -25,23 +25,23 @@ export const sourceOfTruthSchema = z.object({
 
 export type SourceOfTruth = z.infer<typeof sourceOfTruthSchema>;
 
-/** Subscores from the progress evaluator (0–10 each, per contract). */
-export const subscoresSchema = z.object({
-  correctness: z.number().int().min(0).max(10),
-  progress: z.number().int().min(0).max(10),
-  alignment: z.number().int().min(0).max(10),
-  confidence: z.number().int().min(0).max(10),
-});
+export const evaluationCategorySchema = z.enum([
+  "wrong-approach",
+  "stuck",
+  "off-topic",
+  "calc-error",
+  "unsure",
+]);
 
-/** Structured output from ProgressEvaluatorService / Gemini evaluator. */
+export type EvaluationCategory = z.infer<typeof evaluationCategorySchema>;
+
+/** Structured output from ProgressEvaluatorService (screenshot evaluations). */
 export const evaluationResultSchema = z.object({
-  currentStepId: z.string().nullable(),
-  workSummary: z.string(),
-  subscores: subscoresSchema,
-  score: z.number().int().min(0).max(10),
-  isStuck: z.boolean(),
-  misconception: z.string().nullable(),
-  hint: z.string(),
+  progressPercent: z.number().min(0).max(100),
+  reason: z.string(),
+  category: evaluationCategorySchema,
+  confidenceScore: z.number().min(0).max(1),
+  confusionHighlights: z.array(z.string()),
 });
 
 export type EvaluationResult = z.infer<typeof evaluationResultSchema>;

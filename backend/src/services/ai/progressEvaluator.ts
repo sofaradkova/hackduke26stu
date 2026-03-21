@@ -1,15 +1,14 @@
-import { ZodError } from "zod";
 import {
   evaluationResultSchema,
   type EvaluationResult,
   type SourceOfTruth,
 } from "../../schemas/ai.js";
 import { env } from "../../lib/env.js";
-import type { GeminiJsonGenerator } from "./geminiClient.js";
+import type { OpenAiJsonGenerator } from "./openaiClient.js";
 import { mockEvaluationResult } from "./mockAi.js";
 import { AiValidationError } from "../../lib/aiErrors.js";
 
-const EVAL_SYSTEM = `You are a math progress checker. You compare a photo of student work to a canonical solution plan. Output ONLY JSON matching the schema. Be conservative: if handwriting is unclear, lower confidence and score.`;
+const EVAL_SYSTEM = `You are a math progress checker. You compare a photo of student work to a canonical solution plan. Output ONLY JSON matching the schema. Be conservative: if handwriting is unclear, lower confidenceScore and progressPercent.`;
 
 function buildEvaluatorPrompt(
   sourceOfTruth: SourceOfTruth,
@@ -22,30 +21,21 @@ function buildEvaluatorPrompt(
   return `SOURCE_OF_TRUTH (canonical):\n${JSON.stringify(sourceOfTruth)}\n${prev}
 Attached: latest student work screenshot.
 
-Tasks:
-1) Infer currentStepId: match to a stepId from SOURCE_OF_TRUTH steps, or null if unclear.
-2) workSummary: one short sentence describing what you see.
-3) subscores: each 0-10 integers — correctness (math so far), progress (how far along), alignment (matches intended method), confidence (how sure you are from the image).
-4) score: single 0-10 overall (use rubric: 0-2 off track, 3-4 major issues, 5-6 partial, 7-8 mostly on track, 9-10 very on track).
-5) isStuck: true if little/no productive movement or repeated same mistake.
-6) misconception: short snake_case label or null.
-7) hint: ONE short hint only. Follow hintPolicy: usually do NOT state the final answer unless isStuck is true AND subscores show severe difficulty (then at most a nudge, not full solution).
-
-Return ONLY valid JSON:
+Return ONLY valid JSON with this exact shape:
 {
-  "currentStepId": "string | null",
-  "workSummary": "string",
-  "subscores": {
-    "correctness": number,
-    "progress": number,
-    "alignment": number,
-    "confidence": number
-  },
-  "score": number,
-  "isStuck": boolean,
-  "misconception": "string | null",
-  "hint": "string"
-}`;
+  "progressPercent": number,
+  "reason": "string",
+  "category": "wrong-approach" | "stuck" | "off-topic" | "calc-error" | "unsure",
+  "confidenceScore": number,
+  "confusionHighlights": ["string"]
+}
+
+Rules:
+- progressPercent: 0-100 (how close the visible work is to finishing correctly on the intended path).
+- reason: one short paragraph (2-4 sentences max) explaining the judgment.
+- category: pick the single best label.
+- confidenceScore: 0-1 how sure you are given image quality and clarity.
+- confusionHighlights: 0-5 short phrases pointing at what is ambiguous or wrong (empty array if none).`;
 }
 
 export interface ProgressEvaluatorService {
@@ -59,17 +49,17 @@ export interface ProgressEvaluatorService {
 }
 
 export function createProgressEvaluatorService(deps: {
-  gemini: GeminiJsonGenerator | null;
+  openai: OpenAiJsonGenerator | null;
   useMock: boolean;
 }): ProgressEvaluatorService {
   return {
     async evaluate(input): Promise<EvaluationResult> {
-      if (deps.useMock || !deps.gemini) {
+      if (deps.useMock || !deps.openai) {
         return mockEvaluationResult(input.evaluationIndex);
       }
 
-      const raw = await deps.gemini.generate({
-        model: env.geminiEvaluatorModel,
+      const raw = await deps.openai.generate({
+        model: env.openaiModel,
         systemInstruction: EVAL_SYSTEM,
         userPrompt: buildEvaluatorPrompt(
           input.sourceOfTruth,

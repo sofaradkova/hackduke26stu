@@ -1,4 +1,8 @@
-import type { EvaluationResult, SourceOfTruth } from "../schemas/ai.js";
+import type {
+  EvaluationCategory,
+  EvaluationResult,
+  SourceOfTruth,
+} from "../schemas/ai.js";
 
 export type SessionStatus = "active" | "stuck" | "complete";
 
@@ -10,10 +14,11 @@ export interface ProblemSession {
   updatedAt: Date;
   initialScreenshotPath: string;
   sourceOfTruth: SourceOfTruth;
-  latestScore: number | null;
-  latestHint: string | null;
-  latestMisconception: string | null;
-  latestStepId: string | null;
+  latestProgressPercent: number | null;
+  latestReason: string | null;
+  latestCategory: EvaluationCategory | null;
+  latestConfidenceScore: number | null;
+  latestConfusionHighlights: string[] | null;
   status: SessionStatus;
 }
 

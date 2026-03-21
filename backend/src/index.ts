@@ -15,8 +15,7 @@ async function main() {
       port: env.port,
       storageDir: storageRoot,
       mockAi: useMockAi,
-      solverModel: env.geminiSolverModel,
-      evaluatorModel: env.geminiEvaluatorModel,
+      openaiModel: env.openaiModel,
     },
     "Server listening",
   );

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { evaluationResultSchema, sourceOfTruthSchema } from "./ai.js";
+import { evaluationCategorySchema, evaluationResultSchema, sourceOfTruthSchema } from "./ai.js";
 
 /** Response body for POST /api/sessions */
 export const createSessionResponseSchema = z.object({
@@ -26,19 +26,13 @@ export const sessionDetailResponseSchema = z.object({
   updatedAt: z.string(),
   status: z.enum(["active", "stuck", "complete"]),
   sourceOfTruth: sourceOfTruthSchema,
-  latestScore: z.number().nullable(),
-  latestHint: z.string().nullable(),
-  latestMisconception: z.string().nullable(),
-  latestStepId: z.string().nullable(),
+  latestProgressPercent: z.number().nullable(),
+  latestReason: z.string().nullable(),
+  latestCategory: evaluationCategorySchema.nullable(),
+  latestConfidenceScore: z.number().nullable(),
+  latestConfusionHighlights: z.array(z.string()).nullable(),
   evaluations: z.array(evaluationRecordSchema),
 });
 
-/** Response for POST .../screenshots */
-export const screenshotEvalResponseSchema = z.object({
-  score: z.number(),
-  hint: z.string(),
-  isStuck: z.boolean(),
-  misconception: z.string().nullable(),
-  currentStepId: z.string().nullable(),
-  workSummary: z.string(),
-});
+/** Response for POST .../screenshots (same shape as stored evaluation). */
+export const screenshotEvalResponseSchema = evaluationResultSchema;

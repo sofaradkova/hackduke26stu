@@ -1,9 +1,9 @@
-# HackDuke AI backend (screenshots → Gemini)
+# HackDuke AI backend (screenshots → OpenAI)
 
 MVP Fastify service for a **single-student problem session**:
 
-1. **Initial solve** — first screenshot → strong Gemini model → validated `sourceOfTruth` JSON.
-2. **Progressive evaluation** — later screenshots → lighter Gemini model → score, hint, stuck flag, misconception, step id.
+1. **Initial solve** — first screenshot → OpenAI (default `gpt-4.1-nano`) → validated `sourceOfTruth` JSON.
+2. **Progressive evaluation** — later screenshots → same model → `progressPercent`, `reason`, `category`, `confidenceScore`, `confusionHighlights`.
 
 No student/teacher UI, no auth, no WebSockets. Sessions and evaluations live **in memory** (restart clears data). Uploads are stored under `STORAGE_DIR` (default `./uploads`).
 
@@ -16,13 +16,13 @@ No student/teacher UI, no auth, no WebSockets. Sessions and evaluations live **i
 
 ```bash
 cp .env.example .env
-# Optional: add GEMINI_API_KEY and set USE_MOCK_AI=false
+# Optional: add OPENAI_API_KEY and set USE_MOCK_AI=false
 npm install
 npm run dev
 ```
 
-- **`USE_MOCK_AI=true`** or **missing `GEMINI_API_KEY`** → deterministic mock solver/evaluator (good for demos and CI).
-- With a real key, set `USE_MOCK_AI=false` and ensure `GEMINI_SOLVER_MODEL` / `GEMINI_EVALUATOR_MODEL` are enabled for your Google AI Studio / Vertex project.
+- **`USE_MOCK_AI=true`** or **missing `OPENAI_API_KEY`** → deterministic mock solver/evaluator (good for demos and CI).
+- With a real key, set `USE_MOCK_AI=false` and set `OPENAI_MODEL` (defaults to `gpt-4.1-nano`) to a vision-capable chat model your key can use.
 
 Production-style run:
 
@@ -98,17 +98,17 @@ curl -sS "http://localhost:3001/api/sessions/$SID/evaluations"
 ## Example flow (session → two evaluations)
 
 1. **POST `/api/sessions`** with the blank problem sheet → response includes `sessionId` and `sourceOfTruth` (canonical steps + final answer metadata).
-2. **POST `/api/sessions/:id/screenshots`** with a photo after the student writes the first line → JSON: `score`, `hint`, `isStuck`, `misconception`, `currentStepId`, `workSummary`.
-3. **POST** again with a later photo → score/hint update; **GET** `/api/sessions/:id` returns latest aggregates plus full `evaluations` history.
+2. **POST `/api/sessions/:id/screenshots`** with a photo after the student writes the first line → JSON: `progressPercent`, `reason`, `category`, `confidenceScore`, `confusionHighlights`.
+3. **POST** again with a later photo → fields update; **GET** `/api/sessions/:id` returns latest aggregates plus full `evaluations` history.
 
-In **mock** mode, scores trend upward slightly on each evaluation so UI demos show progression without billing.
+In **mock** mode, `progressPercent` trends upward on successive calls so UI demos show progression without billing.
 
 ## Project layout
 
 ```
 src/
   routes/          # HTTP routes
-  services/ai/     # Gemini + mock + solver/evaluator
+  services/ai/     # OpenAI + mock + solver/evaluator
   services/storage/# Local file writes
   services/session/# In-memory store
   schemas/         # zod schemas (AI + API)
@@ -120,7 +120,7 @@ src/
 
 - **400** — missing `image` field or non-image MIME type.
 - **404** — unknown `sessionId`.
-- **502** — Gemini failure or JSON that fails zod validation (details may include zod `flatten()` output).
+- **502** — OpenAI failure or JSON that fails zod validation (details may include zod `flatten()` output).
 
 ## License
 

@@ -48,7 +48,7 @@ fetch(`http://localhost:3001/api/sessions/${sessionId}/screenshots`, {
 })
   .then((r) => r.json())
   .then((data) => {
-    // data.score, data.hint, data.isStuck, ...
+    // data.progressPercent, data.reason, data.category, ...
   });
 ```
 

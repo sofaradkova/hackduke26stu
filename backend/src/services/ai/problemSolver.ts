@@ -1,7 +1,7 @@
 import { sourceOfTruthSchema, type SourceOfTruth } from "../../schemas/ai.js";
 import { env } from "../../lib/env.js";
 import { AiValidationError } from "../../lib/aiErrors.js";
-import type { GeminiJsonGenerator, ImageInput } from "./geminiClient.js";
+import type { OpenAiJsonGenerator, ImageInput } from "./openaiClient.js";
 import { mockSourceOfTruth } from "./mockAi.js";
 
 const SOLVER_SYSTEM = `You are a precise math tutor backend. You read problem images and output ONLY JSON that matches the requested schema. No markdown, no prose outside JSON.`;
@@ -41,18 +41,17 @@ export interface ProblemSolverService {
 }
 
 export function createProblemSolverService(deps: {
-  gemini: GeminiJsonGenerator | null;
+  openai: OpenAiJsonGenerator | null;
   useMock: boolean;
 }): ProblemSolverService {
   return {
     async solveFromImage(image: ImageInput): Promise<SourceOfTruth> {
-      if (deps.useMock || !deps.gemini) {
-        // Mock ignores image but keeps API shape identical.
+      if (deps.useMock || !deps.openai) {
         return mockSourceOfTruth();
       }
 
-      const raw = await deps.gemini.generate({
-        model: env.geminiSolverModel,
+      const raw = await deps.openai.generate({
+        model: env.openaiModel,
         systemInstruction: SOLVER_SYSTEM,
         userPrompt: SOLVER_PROMPT,
         image,

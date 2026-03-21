@@ -71,10 +71,11 @@ All successful AI-backed responses are **JSON** validated with **zod** on the se
   "updatedAt": "ISO-8601",
   "status": "active | stuck | complete",
   "sourceOfTruth": { },
-  "latestScore": null,
-  "latestHint": null,
-  "latestMisconception": null,
-  "latestStepId": null,
+  "latestProgressPercent": null,
+  "latestReason": null,
+  "latestCategory": null,
+  "latestConfidenceScore": null,
+  "latestConfusionHighlights": null,
   "evaluations": [
     {
       "id": "uuid",
@@ -82,18 +83,11 @@ All successful AI-backed responses are **JSON** validated with **zod** on the se
       "screenshotPath": "absolute or relative path on server",
       "timestamp": "ISO-8601",
       "evaluationResult": {
-        "currentStepId": "string | null",
-        "workSummary": "string",
-        "subscores": {
-          "correctness": 0,
-          "progress": 0,
-          "alignment": 0,
-          "confidence": 0
-        },
-        "score": 0,
-        "isStuck": false,
-        "misconception": "string | null",
-        "hint": "string"
+        "progressPercent": 0,
+        "reason": "string",
+        "category": "wrong-approach | stuck | off-topic | calc-error | unsure",
+        "confidenceScore": 0,
+        "confusionHighlights": ["string"]
       }
     }
   ]
@@ -102,9 +96,11 @@ All successful AI-backed responses are **JSON** validated with **zod** on the se
 
 **Status semantics (MVP)**
 
-- `stuck` — last evaluation had `isStuck: true`.
-- `complete` — last evaluation had `score >= 10` (heuristic “fully correct”).
+- `stuck` — last evaluation had `category: "stuck"`.
+- `complete` — last evaluation had `progressPercent >= 100`.
 - `active` — otherwise.
+
+`latest*` fields mirror the most recent screenshot evaluation (all `null` until the first `POST .../screenshots`).
 
 ---
 
@@ -116,26 +112,17 @@ All successful AI-backed responses are **JSON** validated with **zod** on the se
 |------|----------|-------------|
 | `image` | yes | student work photo |
 
-**Response 200**
+**Response 200** — same shape as each `evaluationResult` above:
 
 ```json
 {
-  "score": 7,
-  "hint": "string",
-  "isStuck": false,
-  "misconception": null,
-  "currentStepId": "s2",
-  "workSummary": "string"
+  "progressPercent": 72,
+  "reason": "string",
+  "category": "calc-error",
+  "confidenceScore": 0.65,
+  "confusionHighlights": ["sign error on line 2", "unclear final answer"]
 }
 ```
-
-**Score rubric (0–10 integers)**
-
-- 0–2 off track  
-- 3–4 major issues  
-- 5–6 partially correct  
-- 7–8 mostly on track  
-- 9–10 very on track  
 
 ---
 
@@ -166,6 +153,6 @@ All successful AI-backed responses are **JSON** validated with **zod** on the se
 }
 ```
 
-- **400** — bad multipart / invalid image type.  
-- **404** — unknown session.  
-- **502** — Gemini or schema validation failure (`details` may contain zod flatten data).  
+- **400** — bad multipart / invalid image type.
+- **404** — unknown `sessionId`.
+- **502** — OpenAI failure or JSON that fails zod validation (`details` may contain zod `flatten()` output).

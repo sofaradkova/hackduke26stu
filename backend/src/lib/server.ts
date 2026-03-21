@@ -4,23 +4,23 @@ import { env, useMockAi } from "./env.js";
 import { healthRoutes } from "../routes/health.js";
 import { sessionRoutes } from "../routes/sessions.js";
 import { SessionStore } from "../services/session/sessionStore.js";
-import { LiveGeminiJsonGenerator } from "../services/ai/geminiClient.js";
+import { LiveOpenAiJsonGenerator } from "../services/ai/openaiClient.js";
 import { createProblemSolverService } from "../services/ai/problemSolver.js";
 import { createProgressEvaluatorService } from "../services/ai/progressEvaluator.js";
 
 export async function buildServer() {
   const store = new SessionStore();
-  const gemini =
-    useMockAi || !env.geminiApiKey
+  const openai =
+    useMockAi || !env.openaiApiKey
       ? null
-      : new LiveGeminiJsonGenerator(env.geminiApiKey);
+      : new LiveOpenAiJsonGenerator(env.openaiApiKey);
 
   const problemSolver = createProblemSolverService({
-    gemini,
+    openai,
     useMock: useMockAi,
   });
   const progressEvaluator = createProgressEvaluatorService({
-    gemini,
+    openai,
     useMock: useMockAi,
   });
 
