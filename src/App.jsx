@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Paper,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -12,6 +13,7 @@ import EraserIcon from "@mui/icons-material/AutoFixOff";
 import CircleIcon from "@mui/icons-material/Circle";
 import HighlightAltIcon from "@mui/icons-material/HighlightAlt";
 import worksheetImage from "./assets/problem-set.png";
+import { supabase, hasSupabaseConfig } from "./supabaseClient";
 
 const TOOL = {
   DRAW: "draw",
@@ -31,6 +33,55 @@ const SIZE_TO_PX = {
   [SIZE.LARGE]: 18,
 };
 
+const SCREENSHOT_BUCKET = import.meta.env.VITE_SUPABASE_SCREENSHOT_BUCKET || "screenshots";
+const SCREENSHOT_TABLE = "student_snapshots";
+
+/** Shown on worksheet + stored on every snapshot row for the teacher dashboard. */
+const PROBLEM_SET_TITLE = "Simple Linear Equations";
+
+const LS_STUDENT_ID = "studentId";
+const LS_STUDENT_NAME = "studentName";
+
+/** Clear persisted student identity on each full page load so reload = new session + name prompt. */
+function clearStoredStudentSession() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(LS_STUDENT_ID);
+  localStorage.removeItem(LS_STUDENT_NAME);
+}
+
+const togglePillSx = {
+  borderRadius: "32px",
+  p: 1,
+  gap: 0.75,
+  flexDirection: "column",
+  border: "none",
+  bgcolor: "rgba(255,255,255,0.92)",
+  boxShadow: "0 8px 32px rgba(0,0,0,0.06)",
+  "& .MuiToggleButtonGroup-grouped": {
+    border: 0,
+    borderRadius: "50% !important",
+    mx: "auto",
+  },
+};
+
+const toggleBtnSx = {
+  width: 48,
+  height: 48,
+  minWidth: 48,
+  color: "text.secondary",
+  border: "none",
+  "&:hover": {
+    bgcolor: "rgba(26,26,26,0.06)",
+  },
+  "&.Mui-selected": {
+    bgcolor: "#1a1a1a",
+    color: "#fff",
+    "&:hover": {
+      bgcolor: "#2d2d2d",
+    },
+  },
+};
+
 export default function App() {
   const drawCanvasRef = useRef(null);
   const highlightCanvasRef = useRef(null);
@@ -43,11 +94,34 @@ export default function App() {
   const [tool, setTool] = useState(TOOL.DRAW);
   const [size, setSize] = useState(SIZE.MEDIUM);
   const [isCaptureRunning, setIsCaptureRunning] = useState(false);
-  const [captureCount, setCaptureCount] = useState(0);
-  const [lastCaptureAt, setLastCaptureAt] = useState(null);
-  const [lastFramePreviewUrl, setLastFramePreviewUrl] = useState("");
-  const [captureHistory, setCaptureHistory] = useState([]);
-  const [captureError, setCaptureError] = useState("");
+  const [student, setStudent] = useState({ id: "", name: "" });
+  const [nameInput, setNameInput] = useState("");
+  const [wellDoneVisible, setWellDoneVisible] = useState(false);
+
+  const isStudentRegistered = Boolean(student.id && student.name.trim());
+
+  useEffect(() => {
+    clearStoredStudentSession();
+  }, []);
+
+  const registerStudent = () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed) return;
+
+    const id = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(LS_STUDENT_ID, id);
+    localStorage.setItem(LS_STUDENT_NAME, trimmed);
+    setStudent({ id, name: trimmed });
+    setWellDoneVisible(false);
+    // Start capture right after name is saved (browser will prompt for screen share).
+    void startCaptureLoop();
+  };
+
+  const handleDoneClick = () => {
+    if (!isCaptureRunning) return;
+    stopCaptureLoop();
+    setWellDoneVisible(true);
+  };
 
   useEffect(() => {
     const resizeOne = (canvas) => {
@@ -225,19 +299,50 @@ export default function App() {
     setIsCaptureRunning(false);
   };
 
-  const fakeGeminiVisionRequest = async ({ frameDataUrl, frameNumber, takenAt }) => {
-    // Simulated payload; replace with real fetch once API is wired.
-    const payload = {
-      model: "gemini-2.5-flash",
-      prompt: "Describe what is happening in this screenshot.",
-      imageFormat: "jpeg",
-      screenshotCapturedAt: takenAt,
-      screenshotNumber: frameNumber,
-      imageBytesApprox: frameDataUrl.length,
-    };
+  const uploadScreenshotToSupabase = async ({ frameDataUrl, takenAt }) => {
+    if (!hasSupabaseConfig) {
+      return;
+    }
 
-    console.log("[SIMULATED GEMINI REQUEST]", payload);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    const screenshotId =
+      crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // Read from localStorage so interval callbacks always see current identity (no stale closure).
+    const studentId = localStorage.getItem(LS_STUDENT_ID) || student.id;
+    const studentName = (localStorage.getItem(LS_STUDENT_NAME) || student.name || "").trim();
+    const classId = localStorage.getItem("classId") || "class-demo";
+
+    if (!studentId || !studentName) {
+      return;
+    }
+    const filePath = `${classId}/${studentId}/${screenshotId}.jpg`;
+
+    const response = await fetch(frameDataUrl);
+    const imageBlob = await response.blob();
+
+    const { error: uploadError } = await supabase.storage
+      .from(SCREENSHOT_BUCKET)
+      .upload(filePath, imageBlob, {
+        contentType: "image/jpeg",
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    const { error: insertError } = await supabase.from(SCREENSHOT_TABLE).insert({
+      id: screenshotId,
+      class_id: classId,
+      student_id: studentId,
+      name: studentName,
+      problem_set_title: PROBLEM_SET_TITLE,
+      storage_path: filePath,
+      captured_at: takenAt,
+    });
+
+    if (insertError) {
+      throw insertError;
+    }
   };
 
   const captureAndSendFrame = async () => {
@@ -258,31 +363,16 @@ export default function App() {
     const frameDataUrl = canvas.toDataURL("image/jpeg", 0.75);
     const now = new Date();
 
-    setCaptureCount((prev) => {
-      const next = prev + 1;
-      fakeGeminiVisionRequest({
-        frameDataUrl,
-        frameNumber: next,
-        takenAt: now.toISOString(),
-      });
-      return next;
-    });
-
-    setLastCaptureAt(now.toLocaleTimeString());
-    setLastFramePreviewUrl(frameDataUrl);
-    setCaptureHistory((prev) => {
-      const nextEntry = {
-        id: `${now.getTime()}-${Math.random().toString(36).slice(2)}`,
-        capturedAt: now.toLocaleTimeString(),
-        frameDataUrl,
-      };
-      return [nextEntry, ...prev].slice(0, 24);
+    uploadScreenshotToSupabase({
+      frameDataUrl,
+      takenAt: now.toISOString(),
+    }).catch((error) => {
+      console.error("Supabase upload failed:", error);
     });
   };
 
   const startCaptureLoop = async () => {
     try {
-      setCaptureError("");
       stopCaptureLoop();
 
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -308,7 +398,6 @@ export default function App() {
       }
     } catch (error) {
       console.error("Failed to start screen capture:", error);
-      setCaptureError("Screen capture permission was denied or unavailable.");
       stopCaptureLoop();
     }
   };
@@ -320,204 +409,213 @@ export default function App() {
   }, []);
 
   return (
-    <Box sx={{ height: "100vh", bgcolor: "#f3f4f6", p: 0 }}>
+    <Box
+      sx={{
+        height: "100vh",
+        bgcolor: "background.default",
+        p: 0,
+        position: "relative",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
+      {!isStudentRegistered ? (
+        <Box
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="student-name-dialog-title"
+          sx={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 2000,
+            bgcolor: "rgba(0, 0, 0, 0.38)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            px: 2,
+          }}
+        >
+          <Paper
+            elevation={0}
+            sx={{
+              p: { xs: 3, sm: 4 },
+              maxWidth: 440,
+              width: "100%",
+              borderRadius: "28px",
+              bgcolor: "background.paper",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.1)",
+              border: "1px solid rgba(26,26,26,0.06)",
+            }}
+          >
+            <Typography
+              id="student-name-dialog-title"
+              variant="h5"
+              component="h2"
+              sx={{ mb: 0.5, color: "text.primary" }}
+            >
+              Welcome
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              Enter your name to start.
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              label="Your name"
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") registerStudent();
+              }}
+              sx={{
+                mb: 3,
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: "18px",
+                },
+              }}
+            />
+            <Button
+              variant="contained"
+              color="primary"
+              fullWidth
+              size="large"
+              onClick={registerStudent}
+              disabled={!nameInput.trim()}
+              sx={{
+                py: 1.5,
+                fontSize: "1rem",
+                opacity: nameInput.trim() ? 1 : 0.55,
+              }}
+            >
+              Continue
+            </Button>
+          </Paper>
+        </Box>
+      ) : null}
+
       <Box
         sx={{
           position: "fixed",
           top: "50%",
-          left: 12,
+          left: 20,
           transform: "translateY(-50%)",
           zIndex: 10,
           display: "flex",
           flexDirection: "column",
-          gap: 1.5,
+          gap: 2,
         }}
       >
         <ToggleButtonGroup
-          color="primary"
           exclusive
           orientation="vertical"
           value={tool}
           onChange={(_, nextTool) => {
             if (nextTool) setTool(nextTool);
           }}
-          sx={{ bgcolor: "#ffffff" }}
+          sx={togglePillSx}
         >
-          <ToggleButton value={TOOL.DRAW} aria-label="Draw">
-            <BrushIcon />
+          <ToggleButton value={TOOL.DRAW} aria-label="Draw" sx={toggleBtnSx}>
+            <BrushIcon fontSize="small" />
           </ToggleButton>
-          <ToggleButton value={TOOL.HIGHLIGHT} aria-label="Highlight">
-            <HighlightAltIcon />
+          <ToggleButton value={TOOL.HIGHLIGHT} aria-label="Highlight" sx={toggleBtnSx}>
+            <HighlightAltIcon fontSize="small" />
           </ToggleButton>
-          <ToggleButton value={TOOL.ERASE} aria-label="Erase">
-            <EraserIcon />
+          <ToggleButton value={TOOL.ERASE} aria-label="Erase" sx={toggleBtnSx}>
+            <EraserIcon fontSize="small" />
           </ToggleButton>
         </ToggleButtonGroup>
 
         <ToggleButtonGroup
-          color="primary"
           exclusive
           orientation="vertical"
           value={size}
           onChange={(_, nextSize) => {
             if (nextSize) setSize(nextSize);
           }}
-          sx={{ bgcolor: "#ffffff" }}
+          sx={togglePillSx}
         >
-          <ToggleButton value={SIZE.SMALL} aria-label="Small size">
+          <ToggleButton value={SIZE.SMALL} aria-label="Small size" sx={toggleBtnSx}>
             <CircleIcon sx={{ fontSize: 12 }} />
           </ToggleButton>
-          <ToggleButton value={SIZE.MEDIUM} aria-label="Medium size">
+          <ToggleButton value={SIZE.MEDIUM} aria-label="Medium size" sx={toggleBtnSx}>
             <CircleIcon sx={{ fontSize: 18 }} />
           </ToggleButton>
-          <ToggleButton value={SIZE.LARGE} aria-label="Large size">
+          <ToggleButton value={SIZE.LARGE} aria-label="Large size" sx={toggleBtnSx}>
             <CircleIcon sx={{ fontSize: 24 }} />
           </ToggleButton>
         </ToggleButtonGroup>
       </Box>
 
-      <Box
-        sx={{
-          position: "fixed",
-          right: 12,
-          bottom: 12,
-          zIndex: 11,
-          width: 320,
-          p: 1.5,
-          borderRadius: 2,
-          bgcolor: "rgba(17, 24, 39, 0.88)",
-          color: "#ffffff",
-          display: "flex",
-          flexDirection: "column",
-          gap: 1,
-        }}
-      >
-        <Typography variant="subtitle2">
-          Screen Capture to Gemini (Simulated)
-        </Typography>
-
-        <Box sx={{ display: "flex", gap: 1 }}>
-          <Button
-            variant="contained"
-            color="success"
-            size="small"
-            onClick={startCaptureLoop}
-            disabled={isCaptureRunning}
-          >
-            Start 3s Capture
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={stopCaptureLoop}
-            disabled={!isCaptureRunning}
-            sx={{ borderColor: "#ffffff55", color: "#ffffff" }}
-          >
-            Stop
-          </Button>
-        </Box>
-
-        <Typography variant="caption">
-          Status: {isCaptureRunning ? "Running" : "Stopped"} | Captures:{" "}
-          {captureCount}
-        </Typography>
-
-        <Typography variant="caption">
-          Last capture: {lastCaptureAt ?? "N/A"}
-        </Typography>
-
-        <Button
-          variant="text"
-          size="small"
-          onClick={() => setCaptureHistory([])}
-          sx={{ color: "#cbd5e1", justifyContent: "flex-start", px: 0.5 }}
-        >
-          Clear saved screenshots
-        </Button>
-
-        {captureError ? (
-          <Typography variant="caption" sx={{ color: "#fecaca" }}>
-            {captureError}
-          </Typography>
-        ) : null}
-
-        {lastFramePreviewUrl ? (
-          <Box
-            component="img"
-            src={lastFramePreviewUrl}
-            alt="latest screen capture preview"
-            sx={{
-              width: "100%",
-              borderRadius: 1,
-              border: "1px solid #ffffff33",
-              objectFit: "cover",
-              maxHeight: 180,
-              bgcolor: "#000000",
-            }}
-          />
-        ) : null}
-
-        {captureHistory.length ? (
-          <Box
-            sx={{
-              mt: 0.5,
-              maxHeight: 190,
-              overflowY: "auto",
-              borderTop: "1px solid #ffffff22",
-              pt: 1,
-              display: "grid",
-              gap: 0.75,
-            }}
-          >
-            {captureHistory.map((entry) => (
-              <Box
-                key={entry.id}
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: "90px 1fr",
-                  gap: 1,
-                  alignItems: "center",
-                }}
-              >
-                <Box
-                  component="img"
-                  src={entry.frameDataUrl}
-                  alt={`captured ${entry.capturedAt}`}
-                  sx={{
-                    width: 90,
-                    height: 54,
-                    borderRadius: 0.75,
-                    objectFit: "cover",
-                    border: "1px solid #ffffff2e",
-                    bgcolor: "#000000",
-                  }}
-                />
-                <Typography variant="caption" sx={{ color: "#d1d5db" }}>
-                  Captured at {entry.capturedAt}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
-        ) : null}
-      </Box>
-
       <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
       <canvas ref={frameCanvasRef} style={{ display: "none" }} />
 
-      <Paper
-        elevation={0}
+      <Box
         sx={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
           width: "100%",
-          height: "100%",
-          bgcolor: "#ffffff",
-          backgroundImage: `url(${worksheetImage})`,
-          backgroundRepeat: "no-repeat",
-          backgroundPosition: "center",
-          backgroundSize: "contain",
-          position: "relative",
-          overflow: "hidden",
+          p: { xs: 1.5, sm: 2.5 },
+          pl: { xs: 10, sm: 12 },
+          boxSizing: "border-box",
         }}
       >
+        {isStudentRegistered ? (
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "flex-end",
+              alignItems: "center",
+              flexShrink: 0,
+              mb: 1.5,
+            }}
+          >
+            <Button
+              variant="contained"
+              color="primary"
+              size="large"
+              onClick={handleDoneClick}
+              disabled={!isCaptureRunning}
+              sx={{
+                px: 3,
+                py: 1.25,
+                fontWeight: 700,
+                bgcolor: isCaptureRunning ? "primary.main" : "rgba(26,26,26,0.12)",
+                color: isCaptureRunning ? "primary.contrastText" : "text.secondary",
+                boxShadow: isCaptureRunning ? "0 4px 20px rgba(0,0,0,0.12)" : "none",
+                "&.Mui-disabled": {
+                  bgcolor: "rgba(26,26,26,0.08)",
+                  color: "text.disabled",
+                },
+              }}
+            >
+              Done
+            </Button>
+          </Box>
+        ) : null}
+
+        <Paper
+          elevation={0}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            bgcolor: "#ffffff",
+            backgroundImage: `url(${worksheetImage})`,
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "center",
+            backgroundSize: "contain",
+            position: "relative",
+            overflow: "hidden",
+            borderRadius: "28px",
+            boxShadow: "0 4px 40px rgba(0,0,0,0.06)",
+            border: "1px solid rgba(26,26,26,0.06)",
+          }}
+        >
         <canvas
           ref={highlightCanvasRef}
           onPointerDown={handlePointerDown}
@@ -533,7 +631,8 @@ export default function App() {
             touchAction: "none",
             background: "transparent",
             opacity: 0.28,
-            pointerEvents: tool === TOOL.HIGHLIGHT ? "auto" : "none",
+            pointerEvents:
+              wellDoneVisible ? "none" : tool === TOOL.HIGHLIGHT ? "auto" : "none",
             cursor: tool === TOOL.HIGHLIGHT ? "crosshair" : "default",
           }}
         />
@@ -552,11 +651,58 @@ export default function App() {
             display: "block",
             touchAction: "none",
             background: "transparent",
-            pointerEvents: tool !== TOOL.HIGHLIGHT ? "auto" : "none",
+            pointerEvents:
+              wellDoneVisible ? "none" : tool !== TOOL.HIGHLIGHT ? "auto" : "none",
             cursor: tool === TOOL.ERASE ? "cell" : "crosshair",
           }}
         />
-      </Paper>
+
+        {wellDoneVisible ? (
+          <Box
+            role="status"
+            aria-live="polite"
+            sx={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 20,
+              bgcolor: "rgba(0, 0, 0, 0.42)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "auto",
+              p: 3,
+              textAlign: "center",
+            }}
+          >
+            <Typography
+              variant="h3"
+              component="p"
+              sx={{
+                color: "#ffffff",
+                fontWeight: 700,
+                letterSpacing: "-0.03em",
+                textShadow: "0 2px 24px rgba(0,0,0,0.25)",
+              }}
+            >
+              Well done!
+            </Typography>
+            <Typography
+              variant="body1"
+              sx={{
+                mt: 1.5,
+                color: "rgba(255,255,255,0.88)",
+                maxWidth: 360,
+              }}
+            >
+              Great work on this problem set.
+            </Typography>
+          </Box>
+        ) : null}
+        </Paper>
+      </Box>
     </Box>
   );
 }
