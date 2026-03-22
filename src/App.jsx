@@ -44,7 +44,6 @@ const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 const OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || "gpt-4o";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEBUG = import.meta.env.VITE_DEBUG === "true";
-const LOG_ENDPOINT = "/api/debug-log";
 
 /** Shown on worksheet + stored on every snapshot row for the teacher dashboard. */
 const PROBLEM_SET_TITLE = "Simple Linear Equations";
@@ -107,7 +106,6 @@ export default function App() {
   const screenVideoRef = useRef(null);
   const captureIntervalRef = useRef(null);
   const captureDelayRef = useRef(null);
-  const logSessionRef = useRef(randomId());
   const frameCanvasRef = useRef(null);
 
   const [tool, setTool] = useState(TOOL.DRAW);
@@ -121,56 +119,18 @@ export default function App() {
 
   const isStudentRegistered = Boolean(student.id && student.name.trim());
 
-  const sendDebugLogToServer = (entry) => {
-    if (!DEBUG || typeof window === "undefined" || typeof fetch === "undefined" || !entry) return;
-
-    let sanitizedData = null;
-    if (entry.data !== null && entry.data !== undefined) {
-      try {
-        sanitizedData = JSON.parse(JSON.stringify(entry.data));
-      } catch {
-        sanitizedData = {
-          __unserializable: true,
-          fallback: String(entry.data),
-        };
-      }
-    }
-
-    const payload = {
-      sessionId: logSessionRef.current,
-      timestamp: entry.timestamp,
-      isoTimestamp: entry.isoTimestamp,
-      type: entry.type,
-      message: entry.message,
-      data: sanitizedData,
-      studentId: localStorage.getItem(LS_STUDENT_ID) || student.id || null,
-      studentName: (localStorage.getItem(LS_STUDENT_NAME) || student.name || "").trim(),
-      classId: localStorage.getItem("classId") || "class-demo",
-    };
-
-    fetch(LOG_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      keepalive: true,
-    }).catch((error) => {
-      console.warn("Failed to persist debug log", error);
-    });
-  };
+  // Debug logging is console-only (no server)
 
   const addDebugLog = (type, message, data = null) => {
     if (!DEBUG) return;
-    const now = new Date();
     const logEntry = {
-      timestamp: now.toLocaleTimeString(),
+      timestamp: new Date().toLocaleTimeString(),
       type,
       message,
       data,
     };
-
-    setDebugLogs((prev) => [...prev.slice(-49), logEntry]); // Keep last 50 logs
+    setDebugLogs((prev) => [...prev.slice(-49), logEntry]);
     console.log(`[${type}] ${message}`, data || "");
-    sendDebugLogToServer({ ...logEntry, isoTimestamp: now.toISOString() });
   };
 
   useEffect(() => {
