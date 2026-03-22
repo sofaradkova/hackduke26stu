@@ -39,36 +39,52 @@ export function mockSourceOfTruth(): SourceOfTruth {
  */
 export function mockEvaluationResult(evaluationIndex: number): EvaluationResult {
   const progressPercent = Math.min(25 + evaluationIndex * 35, 100);
-  const categories: EvaluationCategory[] = [
-    "unsure",
-    "calc-error",
-    "stuck",
-    "wrong-approach",
-    "off-topic",
-  ];
-  const category = categories[evaluationIndex % categories.length]!;
 
-  const reasons = [
-    "Handwriting is partly legible; student started isolating x but arithmetic on the constant is unclear.",
-    "The linear structure matches the problem, but one operation on the constant term looks inconsistent.",
-    "Little forward movement between this shot and the expected next step—same scratch work repeated.",
+  /** One row per category so mock labels align with reasons (stuck ≠ wrong work). */
+  const cycle: {
+    category: EvaluationCategory;
+    reason: string;
+    confusionHighlights: string[];
+  }[] = [
+    {
+      category: "unsure",
+      reason:
+        "Handwriting is partly legible; hard to confirm whether the student subtracted 5 on both sides.",
+      confusionHighlights: ["constant term move", "sign on subtraction"],
+    },
+    {
+      category: "calc-error",
+      reason:
+        "The setup matches subtracting 5 from both sides, but the resulting constant on the right looks inconsistent with 17 − 5.",
+      confusionHighlights: ["line 2: 2x = ?", "check 17 − 5"],
+    },
+    {
+      category: "wrong-approach",
+      reason:
+        "The student appears to be squaring both sides or using a nonlinear move that does not match this linear equation—strategy diverges from isolating x.",
+      confusionHighlights: ["linear vs nonlinear step", "expected: subtract 5"],
+    },
+    {
+      category: "stuck",
+      reason:
+        "No new lines since the prior screenshot—the same incomplete expression is repeated without a next algebraic step.",
+      confusionHighlights: ["no forward progress", "same scratch repeated"],
+    },
+    {
+      category: "off-topic",
+      reason:
+        "Visible work looks unrelated to solving 2x + 5 = 17 (different symbols or task).",
+      confusionHighlights: ["off-topic scratch"],
+    },
   ];
-  const reason =
-    reasons[Math.min(evaluationIndex, reasons.length - 1)] ??
-    "Work is converging toward the expected solution path.";
 
-  const confusionHighlights =
-    evaluationIndex === 0
-      ? ["constant term move", "sign on subtraction"]
-      : evaluationIndex === 1
-        ? ["line 2: 2x = ?", "check both sides"]
-        : ["stuck repeating prior step"];
+  const row = cycle[evaluationIndex % cycle.length]!;
 
   return {
     progressPercent,
-    reason,
-    category,
+    reason: row.reason,
+    category: row.category,
     confidenceScore: evaluationIndex === 0 ? 0.55 : 0.72,
-    confusionHighlights,
+    confusionHighlights: row.confusionHighlights,
   };
 }
