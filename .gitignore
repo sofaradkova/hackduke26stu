@@ -28,6 +28,9 @@ aplogs/
 # Downloaded models
 local-llm-video-captioning/
 
+# Git worktrees
+.worktrees/
+
 # OS/editor files
 .DS_Store
 .vscode/
