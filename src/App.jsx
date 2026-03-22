@@ -1030,6 +1030,7 @@ Common Errors to Check:
           </Box>
         ) : null}
       </Paper>
+      </Box>
     </Box>
   );
 }
