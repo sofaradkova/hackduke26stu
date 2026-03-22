@@ -12,8 +12,17 @@ import BrushIcon from "@mui/icons-material/Brush";
 import EraserIcon from "@mui/icons-material/AutoFixOff";
 import CircleIcon from "@mui/icons-material/Circle";
 import HighlightAltIcon from "@mui/icons-material/HighlightAlt";
-import worksheetImage from "./assets/547583d9-6.png";
+import worksheetImage from "./assets/problem-set.png";
 import { supabase, hasSupabaseConfig } from "./supabaseClient";
+import {
+  createAiSession,
+  postAiScreenshot,
+} from "./aiBackend.js";
+
+const CLASS_ID =
+  import.meta.env.VITE_CLASS_ID?.trim() || "class-demo";
+
+const LS_AI_STORE = "hackduke_ai_session";
 
 const TOOL = {
   DRAW: "draw",
@@ -36,27 +45,11 @@ const SIZE_TO_PX = {
 const SCREENSHOT_BUCKET = import.meta.env.VITE_SUPABASE_SCREENSHOT_BUCKET || "screenshots";
 const SCREENSHOT_TABLE = "student_snapshots";
 
-/** AI Provider Configuration */
-const AI_PROVIDER = import.meta.env.VITE_AI_PROVIDER || "local"; // "local" or "openai"
-const MLX_BASE_URL = import.meta.env.VITE_MLX_BASE_URL || "http://127.0.0.1:8081";
-const MLX_MODEL_ID = import.meta.env.VITE_MLX_MODEL_ID || "mlx-community/Qwen3.5-0.8B-MLX-8bit";
-const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
-const OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || "gpt-4o";
-const OPENAI_BASE_URL = "https://api.openai.com/v1";
-const DEBUG = import.meta.env.VITE_DEBUG === "true";
-
 /** Shown on worksheet + stored on every snapshot row for the teacher dashboard. */
 const PROBLEM_SET_TITLE = "Simple Linear Equations";
 
 const LS_STUDENT_ID = "studentId";
 const LS_STUDENT_NAME = "studentName";
-
-const randomId = () => {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-};
 
 /** Clear persisted student identity on each full page load so reload = new session + name prompt. */
 function clearStoredStudentSession() {
@@ -103,9 +96,8 @@ export default function App() {
   const highlightCanvasRef = useRef(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef(null);
-  const screenVideoRef = useRef(null);
+  const worksheetImageRef = useRef(null);
   const captureIntervalRef = useRef(null);
-  const captureDelayRef = useRef(null);
   const frameCanvasRef = useRef(null);
 
   const [tool, setTool] = useState(TOOL.DRAW);
@@ -114,45 +106,47 @@ export default function App() {
   const [student, setStudent] = useState({ id: "", name: "" });
   const [nameInput, setNameInput] = useState("");
   const [wellDoneVisible, setWellDoneVisible] = useState(false);
-  const [latestCaption, setLatestCaption] = useState(null);
-  const [debugLogs, setDebugLogs] = useState([]);
+
+  /** AI backend: session + progressive evaluations (stored for this student in-session). */
+  const [aiSession, setAiSession] = useState(null);
+  const [aiEvaluations, setAiEvaluations] = useState([]);
+  const backendSessionIdRef = useRef(null);
+  const aiSessionRef = useRef(null);
+
+  useEffect(() => {
+    aiSessionRef.current = aiSession;
+  }, [aiSession]);
 
   const isStudentRegistered = Boolean(student.id && student.name.trim());
 
-  // Debug logging is console-only (no server)
-
-  const addDebugLog = (type, message, data = null) => {
-    if (!DEBUG) return;
-    const logEntry = {
-      timestamp: new Date().toLocaleTimeString(),
-      type,
-      message,
-      data,
-    };
-    setDebugLogs((prev) => [...prev.slice(-49), logEntry]);
-    console.log(`[${type}] ${message}`, data || "");
-  };
-
   useEffect(() => {
-    if (DEBUG) {
-      addDebugLog("info", "Debug mode enabled");
-    }
+    clearStoredStudentSession();
   }, []);
 
   useEffect(() => {
-    clearStoredStudentSession();
+    const img = new Image();
+    img.src = worksheetImage;
+    img.onload = () => { worksheetImageRef.current = img; };
   }, []);
 
   const registerStudent = () => {
     const trimmed = nameInput.trim();
     if (!trimmed) return;
 
-    const id = randomId();
+    const id = crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     localStorage.setItem(LS_STUDENT_ID, id);
     localStorage.setItem(LS_STUDENT_NAME, trimmed);
     setStudent({ id, name: trimmed });
     setWellDoneVisible(false);
-    // Start capture right after name is saved (browser will prompt for screen share).
+    backendSessionIdRef.current = null;
+    setAiSession(null);
+    setAiEvaluations([]);
+    try {
+      localStorage.removeItem(LS_AI_STORE);
+    } catch {
+      /* ignore */
+    }
+    // Start capture right after name is saved.
     void startCaptureLoop();
   };
 
@@ -324,231 +318,30 @@ export default function App() {
   };
 
   const stopCaptureLoop = () => {
-    if (captureDelayRef.current) {
-      clearTimeout(captureDelayRef.current);
-      captureDelayRef.current = null;
-    }
     if (captureIntervalRef.current) {
       clearInterval(captureIntervalRef.current);
       captureIntervalRef.current = null;
     }
 
-    const stream = screenVideoRef.current?.srcObject;
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      screenVideoRef.current.srcObject = null;
-    }
-
     setIsCaptureRunning(false);
   };
 
-  const SYSTEM_PROMPT = `You are an expert mathematics tutor analyzing a student's calculus worksheet. You MUST verify all answers by solving problems yourself first.
-
---- STEP 1: SOLVE THE PROBLEM YOURSELF
-Before analyzing student work:
-- Solve each problem completely and compute the EXACT correct answer
-- For integrals: set up the integral and compute the numerical result
-- For areas: identify bounds, set up ∫[top-bottom]dx, compute
-- For volumes: use disk/washer/shell method correctly, compute
-- Store your computed answer - you will compare against the student's answer
-
---- STEP 2: TRANSCRIBE
-
-Problem Content (Exact transcription of printed text)
-
-Student Work (Transcribed)
-- Line-by-line transcription of student handwriting
-- Mark [unclear] for ambiguous handwriting
-- NEVER invent missing work
-
---- STEP 3: VERIFY CORRECTNESS (Critical)
-
-CORRECT ANSWER (from your calculation):
-- State the mathematically correct answer with work shown
-
-STUDENT'S ANSWER:
-- State what the student wrote as their final answer
-
-VERDICT:
-- CORRECT: Student's answer matches your computed answer (within reasonable rounding)
-- INCORRECT: Student's answer differs from correct answer
-- PARTIAL: Student has correct setup but wrong final answer
-- UNCHECKABLE: Cannot verify due to missing work
-
-If INCORRECT:
-- Show what the correct answer should be
-- Identify the likely error (wrong bounds? wrong integrand? algebra mistake?)
-- DO NOT say "correct" if the answer is wrong
-
---- STEP 4: PROGRESS ANALYSIS
-
-Current Step:
-- What step the student is on (setup, integration, evaluation, final answer)
-
-Thinking Assessment:
-- Is their approach mathematically sound?
-- Are they using the right method?
-- What concept are they struggling with?
-
---- STEP 5: ERROR ANALYSIS (if applicable)
-
-Common Errors to Check:
-- Wrong bounds of integration
-- Confusing top/bottom functions for area
-- Forgetting π in volume problems
-- Sign errors
-- Algebra mistakes in simplification
-- Using wrong formula (disk vs washer)
-
---- OUTPUT FORMAT
-
-📋 PROBLEM
-[Exact problem text]
-
-🎯 CORRECT ANSWER
-[Your computed answer with brief work]
-
-✏️ STUDENT WORK
-[Transcribed handwriting]
-
-📊 VERDICT: CORRECT / INCORRECT / PARTIAL / UNCHECKABLE
-
-❌ ERRORS FOUND (if any)
-[Specific mistakes and corrections]
-
-🧠 CONCEPTUAL UNDERSTANDING
-- What they understand
-- What they're missing
-
-📝 NEXT STEPS
-[What they should do to fix errors]`;
-
-  const captionWithAI = async (frameDataUrl) => {
-    const base64Image = frameDataUrl.split(',')[1];
-    const isLocal = AI_PROVIDER === "local";
-    
-    addDebugLog("info", `Using ${isLocal ? "Local MLX" : "OpenAI"} for analysis`);
-    console.log(`🤖 Using ${isLocal ? "Local MLX" : "OpenAI"} for analysis...`);
-
-    try {
-      const messages = [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: SYSTEM_PROMPT },
-            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-          ]
-        }
-      ];
-
-      if (isLocal) {
-        // Local MLX Server
-        const response = await fetch(`${MLX_BASE_URL}/v1/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: MLX_MODEL_ID,
-            messages,
-            max_tokens: 1500,
-            stream: false
-          })
-        });
-
-        if (!response.ok) {
-          throw new Error(`MLX server error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const caption = data.choices?.[0]?.message?.content || "No analysis generated";
-        console.log("🤖 Local MLX Analysis:", caption);
-        setLatestCaption(caption);
-        return caption;
-      } else {
-        // OpenAI API
-        if (!OPENAI_API_KEY) {
-          throw new Error("OpenAI API key not configured. Set VITE_OPENAI_API_KEY in .env");
-        }
-
-        const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${OPENAI_API_KEY}`
-          },
-          body: JSON.stringify({
-            model: OPENAI_MODEL,
-            messages,
-            max_completion_tokens: 1500,
-            stream: false
-          })
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          addDebugLog("error", `OpenAI HTTP ${response.status}`, errorData);
-          throw new Error(`OpenAI error: ${response.status} - ${errorData.error?.message || response.statusText}`);
-        }
-
-        const data = await response.json();
-        addDebugLog("info", "OpenAI raw response", { 
-          id: data.id, 
-          model: data.model, 
-          finish_reason: data.choices?.[0]?.finish_reason,
-          usage: data.usage,
-          content_preview: data.choices?.[0]?.message?.content?.slice(0, 100) || "[empty]"
-        });
-        
-        const caption = data.choices?.[0]?.message?.content || "No analysis generated";
-        const finishReason = data.choices?.[0]?.finish_reason;
-        
-        if (finishReason === "length") {
-          addDebugLog("warn", "OpenAI hit token limit - increase max_completion_tokens", { usage: data.usage });
-        }
-        
-        console.log("🤖 OpenAI Analysis:", caption);
-        setLatestCaption(caption);
-        return caption;
-      }
-    } catch (error) {
-      addDebugLog("error", `${AI_PROVIDER} analysis failed`, error.message);
-      console.error(`${AI_PROVIDER} analysis failed:`, error);
-      return null;
-    }
-  };
-
-  const downloadScreenshotLocally = (frameDataUrl, timestamp) => {
-    const studentName = (localStorage.getItem(LS_STUDENT_NAME) || student.name || "student").trim();
-    const classId = localStorage.getItem("classId") || "class-demo";
-    const dateStr = timestamp.toISOString().split("T")[0];
-    const timeStr = timestamp.toTimeString().split(":")[0] + timestamp.toTimeString().split(":")[1];
-    const filename = `${classId}_${studentName}_${dateStr}_${timeStr}.jpg`;
-
-    const link = document.createElement("a");
-    link.href = frameDataUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const uploadScreenshotToSupabase = async ({ frameDataUrl, takenAt }) => {
+  const uploadScreenshotToSupabase = async ({ imageBlob, takenAt }) => {
     if (!hasSupabaseConfig) {
       return;
     }
 
-    const screenshotId = randomId();
+    const screenshotId =
+      crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     // Read from localStorage so interval callbacks always see current identity (no stale closure).
     const studentId = localStorage.getItem(LS_STUDENT_ID) || student.id;
     const studentName = (localStorage.getItem(LS_STUDENT_NAME) || student.name || "").trim();
-    const classId = localStorage.getItem("classId") || "class-demo";
+    const classId = localStorage.getItem("classId") || CLASS_ID;
 
     if (!studentId || !studentName) {
       return;
     }
     const filePath = `${classId}/${studentId}/${screenshotId}.jpg`;
-
-    const response = await fetch(frameDataUrl);
-    const imageBlob = await response.blob();
 
     const { error: uploadError } = await supabase.storage
       .from(SCREENSHOT_BUCKET)
@@ -576,84 +369,131 @@ Common Errors to Check:
     }
   };
 
-  const captureAndSendFrame = async () => {
-    const video = screenVideoRef.current;
-    const canvas = frameCanvasRef.current;
-    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) {
-      addDebugLog("warn", "Capture skipped - no video stream");
-      return;
+  const persistAiStore = (session, evaluations) => {
+    try {
+      const studentId = localStorage.getItem(LS_STUDENT_ID);
+      if (!studentId) return;
+      localStorage.setItem(
+        LS_AI_STORE,
+        JSON.stringify({
+          studentId,
+          session,
+          evaluations,
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+    } catch {
+      /* ignore */
     }
-
-    addDebugLog("info", "Capturing frame", { width: video.videoWidth, height: video.videoHeight });
-
-    const ctx = canvas.getContext("2d");
-    const maxWidth = 1920;
-    const ratio = video.videoWidth / video.videoHeight;
-    const width = Math.min(maxWidth, video.videoWidth);
-    const height = Math.floor(width / ratio);
-
-    canvas.width = width;
-    canvas.height = height;
-    ctx.drawImage(video, 0, 0, width, height);
-
-    const frameDataUrl = canvas.toDataURL("image/jpeg", 0.92);
-    const now = new Date();
-    
-    addDebugLog("info", `Frame captured: ${width}x${height}px, ~${Math.round(frameDataUrl.length / 1024)}KB`);
-
-    // Get AI caption
-    addDebugLog("info", "Sending to AI for analysis...");
-    const caption = await captionWithAI(frameDataUrl);
-    if (caption) {
-      addDebugLog("info", "AI caption received", { preview: caption.slice(0, 100) });
-      console.log(`[${now.toISOString()}] Caption: ${caption}`);
-    } else {
-      addDebugLog("warn", "No caption returned from AI");
-    }
-
-    uploadScreenshotToSupabase({
-      frameDataUrl,
-      takenAt: now.toISOString(),
-    }).catch((error) => {
-      addDebugLog("error", "Supabase upload failed", error.message);
-      console.error("Supabase upload failed:", error);
-    });
   };
 
-  const startCaptureLoop = async () => {
+  const sendFrameToAiBackend = async (imageBlob) => {
+    const studentId = localStorage.getItem(LS_STUDENT_ID) || student.id;
+    if (!studentId) return;
+
     try {
-      stopCaptureLoop();
-
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-      });
-
-      const video = screenVideoRef.current;
-      if (!video) return;
-
-      video.srcObject = stream;
-      await video.play();
-
-      setIsCaptureRunning(true);
-      captureDelayRef.current = setTimeout(() => {
-        captureDelayRef.current = null;
-        void captureAndSendFrame();
-        captureIntervalRef.current = setInterval(() => {
-          void captureAndSendFrame();
-        }, 3000);
-      }, 5000);
-
-      const [track] = stream.getVideoTracks();
-      if (track) {
-        track.addEventListener("ended", () => {
-          stopCaptureLoop();
+      if (!backendSessionIdRef.current) {
+        const data = await createAiSession(imageBlob, studentId, CLASS_ID);
+        backendSessionIdRef.current = data.sessionId;
+        const next = {
+          sessionId: data.sessionId,
+          sourceOfTruth: data.sourceOfTruth,
+          status: data.status,
+        };
+        setAiSession(next);
+        persistAiStore(next, []);
+      } else {
+        const evalResult = await postAiScreenshot(backendSessionIdRef.current, imageBlob);
+        setAiEvaluations((prev) => {
+          const next = [
+            ...prev,
+            {
+              at: new Date().toISOString(),
+              ...evalResult,
+            },
+          ];
+          persistAiStore(
+            {
+              sessionId: backendSessionIdRef.current,
+              sourceOfTruth: aiSessionRef.current?.sourceOfTruth,
+              status: aiSessionRef.current?.status,
+            },
+            next,
+          );
+          return next;
         });
       }
     } catch (error) {
-      console.error("Failed to start screen capture:", error);
-      stopCaptureLoop();
+      console.error("AI backend request failed:", error);
     }
+  };
+
+  const captureAndSendFrame = async () => {
+    const drawCanvas = drawCanvasRef.current;
+    const highlightCanvas = highlightCanvasRef.current;
+    const frameCanvas = frameCanvasRef.current;
+    if (!drawCanvas || !highlightCanvas || !frameCanvas) return;
+
+    const width = drawCanvas.width;
+    const height = drawCanvas.height;
+    if (width === 0 || height === 0) return;
+
+    frameCanvas.width = width;
+    frameCanvas.height = height;
+    const ctx = frameCanvas.getContext("2d");
+
+    // Layer 1: White background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+
+    // Layer 2: Worksheet background image (matching CSS background-size: contain)
+    if (worksheetImageRef.current) {
+      const img = worksheetImageRef.current;
+      const imgRatio = img.naturalWidth / img.naturalHeight;
+      const canvasRatio = width / height;
+      let dw, dh, dx, dy;
+      if (imgRatio > canvasRatio) {
+        dw = width; dh = width / imgRatio;
+        dx = 0; dy = (height - dh) / 2;
+      } else {
+        dh = height; dw = height * imgRatio;
+        dx = (width - dw) / 2; dy = 0;
+      }
+      ctx.drawImage(img, dx, dy, dw, dh);
+    }
+
+    // Layer 3: Highlight strokes (opacity matches CSS 0.28)
+    ctx.globalAlpha = 0.28;
+    ctx.drawImage(highlightCanvas, 0, 0);
+    ctx.globalAlpha = 1.0;
+
+    // Layer 4: Draw strokes
+    ctx.drawImage(drawCanvas, 0, 0);
+
+    const frameDataUrl = frameCanvas.toDataURL("image/jpeg", 0.75);
+    const now = new Date();
+    const imageBlob = await (await fetch(frameDataUrl)).blob();
+
+    uploadScreenshotToSupabase({
+      imageBlob,
+      takenAt: now.toISOString(),
+    }).catch((error) => {
+      console.error("Supabase upload failed:", error);
+    });
+
+    void sendFrameToAiBackend(imageBlob);
+  };
+
+  const startCaptureLoop = async () => {
+    stopCaptureLoop();
+    backendSessionIdRef.current = null;
+    setAiSession(null);
+    setAiEvaluations([]);
+    try { localStorage.removeItem(LS_AI_STORE); } catch { /* ignore */ }
+
+    setIsCaptureRunning(true);
+    captureAndSendFrame();
+    captureIntervalRef.current = setInterval(captureAndSendFrame, 3000);
   };
 
   useEffect(() => {
@@ -803,8 +643,55 @@ Common Errors to Check:
         </ToggleButtonGroup>
       </Box>
 
-      <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
       <canvas ref={frameCanvasRef} style={{ display: "none" }} />
+
+      {isStudentRegistered && isCaptureRunning ? (
+        <Paper
+          elevation={3}
+          sx={{
+            position: "fixed",
+            bottom: 16,
+            right: 16,
+            zIndex: 100,
+            maxWidth: 360,
+            p: 2,
+            borderRadius: "16px",
+            bgcolor: "rgba(255,255,255,0.96)",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+            border: "1px solid rgba(26,26,26,0.08)",
+          }}
+        >
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+            AI progress
+          </Typography>
+          {!aiSession ? (
+            <Typography variant="body2">Starting problem session…</Typography>
+          ) : aiEvaluations.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              Session ready — grading begins on the next snapshot (every 3s).
+            </Typography>
+          ) : (
+            (() => {
+              const last = aiEvaluations[aiEvaluations.length - 1];
+              return (
+                <Box>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                    {last.progressPercent}% · {last.category}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {last.reason}
+                  </Typography>
+                  {last.confusionHighlights?.length ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                      {last.confusionHighlights.join(" · ")}
+                    </Typography>
+                  ) : null}
+                </Box>
+              );
+            })()
+          )}
+        </Paper>
+      ) : null}
 
       <Box
         sx={{
@@ -822,12 +709,32 @@ Common Errors to Check:
           <Box
             sx={{
               display: "flex",
-              justifyContent: "flex-end",
-              alignItems: "center",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 2,
               flexShrink: 0,
               mb: 1.5,
             }}
           >
+            <Box
+              sx={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "flex-start",
+                gap: 2,
+                minWidth: 0,
+                flex: 1,
+              }}
+            >
+              <Typography
+                variant="subtitle1"
+                sx={{ fontWeight: 700, flexShrink: 0, pt: 0.5 }}
+              >
+                {student.name}
+              </Typography>
+            </Box>
+
             <Button
               variant="contained"
               color="primary"
@@ -838,6 +745,7 @@ Common Errors to Check:
                 px: 3,
                 py: 1.25,
                 fontWeight: 700,
+                flexShrink: 0,
                 bgcolor: isCaptureRunning ? "primary.main" : "rgba(26,26,26,0.12)",
                 color: isCaptureRunning ? "primary.contrastText" : "text.secondary",
                 boxShadow: isCaptureRunning ? "0 4px 20px rgba(0,0,0,0.12)" : "none",
@@ -955,81 +863,7 @@ Common Errors to Check:
             </Typography>
           </Box>
         ) : null}
-
-        {latestCaption && !wellDoneVisible ? (
-          <Box
-            sx={{
-              position: "absolute",
-              top: 12,
-              right: 12,
-              zIndex: 15,
-              maxWidth: 500,
-              maxHeight: "80vh",
-              overflow: "auto",
-              bgcolor: "rgba(255, 255, 255, 0.95)",
-              backdropFilter: "blur(4px)",
-              borderRadius: 2,
-              p: 2,
-              boxShadow: 2,
-            }}
-          >
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: "block", mb: 0.5 }}>
-              🤖 AI Observation
-            </Typography>
-            <Typography variant="body2" color="text.primary">
-              {latestCaption}
-            </Typography>
-          </Box>
-        ) : null}
-
-        {DEBUG && debugLogs.length > 0 ? (
-          <Box
-            sx={{
-              position: "fixed",
-              bottom: 12,
-              right: 12,
-              zIndex: 100,
-              width: 400,
-              maxHeight: 250,
-              bgcolor: "rgba(0, 0, 0, 0.85)",
-              color: "#00ff00",
-              fontFamily: "monospace",
-              fontSize: "11px",
-              borderRadius: 1,
-              p: 1.5,
-              overflow: "auto",
-              boxShadow: 3,
-            }}
-          >
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
-              <Typography variant="caption" sx={{ color: "#00ff00", fontWeight: "bold" }}>
-                🔧 DEBUG LOGS
-              </Typography>
-              <Button
-                size="small"
-                sx={{ color: "#00ff00", minWidth: "auto", p: 0.5, fontSize: "10px" }}
-                onClick={() => setDebugLogs([])}
-              >
-                Clear
-              </Button>
-            </Box>
-            {debugLogs.map((log, i) => (
-              <Box key={i} sx={{ mb: 0.5, wordBreak: "break-word" }}>
-                <span style={{ color: "#888" }}>[{log.timestamp}]</span>{" "}
-                <span style={{ color: log.type === "error" ? "#ff4444" : log.type === "warn" ? "#ffaa00" : "#00ff00" }}>
-                  {log.type.toUpperCase()}:
-                </span>{" "}
-                {log.message}
-                {log.data && (
-                  <Box component="pre" sx={{ m: 0, pl: 2, color: "#aaa", fontSize: "10px" }}>
-                    {JSON.stringify(log.data, null, 2).slice(0, 200)}
-                  </Box>
-                )}
-              </Box>
-            ))}
-          </Box>
-        ) : null}
-      </Paper>
+        </Paper>
       </Box>
     </Box>
   );

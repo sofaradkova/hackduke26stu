@@ -16,7 +16,6 @@ aplogs/
 # Environment files (NEVER commit these!)
 .env
 .env.*
-!.env.example
 
 # Screenshots & captures
 *.jpg
@@ -27,6 +26,9 @@ aplogs/
 
 # Downloaded models
 local-llm-video-captioning/
+
+# Git worktrees
+.worktrees/
 
 # OS/editor files
 .DS_Store
