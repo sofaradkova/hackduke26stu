@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
+  IconButton,
   Paper,
   TextField,
   ToggleButton,
@@ -12,6 +13,8 @@ import BrushIcon from "@mui/icons-material/Brush";
 import EraserIcon from "@mui/icons-material/AutoFixOff";
 import CircleIcon from "@mui/icons-material/Circle";
 import HighlightAltIcon from "@mui/icons-material/HighlightAlt";
+import MovieIcon from "@mui/icons-material/Movie";
+import CloseIcon from "@mui/icons-material/Close";
 import worksheetImage from "./assets/problem-set.png";
 import { supabase, hasSupabaseConfig } from "./supabaseClient";
 import {
@@ -41,6 +44,9 @@ const SIZE_TO_PX = {
   [SIZE.MEDIUM]: 10,
   [SIZE.LARGE]: 18,
 };
+
+const HELP_VIDEO_URL =
+  "https://dfngqawzseqhzehxbrqr.supabase.co/storage/v1/object/public/video/prob4frq-Prob4FRQScene.mp4";
 
 const SCREENSHOT_BUCKET = import.meta.env.VITE_SUPABASE_SCREENSHOT_BUCKET || "screenshots";
 const SCREENSHOT_TABLE = "student_snapshots";
@@ -106,6 +112,7 @@ export default function App() {
   const [student, setStudent] = useState({ id: "", name: "" });
   const [nameInput, setNameInput] = useState("");
   const [wellDoneVisible, setWellDoneVisible] = useState(false);
+  const [videoOpen, setVideoOpen] = useState(false);
 
   /** AI backend: session + progressive evaluations (stored for this student in-session). */
   const [aiSession, setAiSession] = useState(null);
@@ -641,7 +648,87 @@ export default function App() {
             <CircleIcon sx={{ fontSize: 24 }} />
           </ToggleButton>
         </ToggleButtonGroup>
+
+        <Box
+          sx={{
+            ...togglePillSx,
+            p: 0.75,
+          }}
+        >
+          <IconButton
+            onClick={() => setVideoOpen(true)}
+            aria-label="Play help video"
+            sx={{
+              width: 48,
+              height: 48,
+              color: "text.secondary",
+              "&:hover": {
+                bgcolor: "rgba(26,26,26,0.06)",
+              },
+            }}
+          >
+            <MovieIcon fontSize="small" />
+          </IconButton>
+        </Box>
       </Box>
+
+      {videoOpen && (
+        <Box
+          onClick={() => setVideoOpen(false)}
+          sx={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 2000,
+            bgcolor: "rgba(0, 0, 0, 0.6)",
+            backdropFilter: "blur(10px)",
+            WebkitBackdropFilter: "blur(10px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Box
+            onClick={(e) => e.stopPropagation()}
+            sx={{
+              position: "relative",
+              maxWidth: "80vw",
+              maxHeight: "80vh",
+              borderRadius: "28px",
+              overflow: "hidden",
+              bgcolor: "#000",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.3)",
+            }}
+          >
+            <IconButton
+              onClick={() => setVideoOpen(false)}
+              aria-label="Close video"
+              sx={{
+                position: "absolute",
+                top: 8,
+                right: 8,
+                zIndex: 1,
+                bgcolor: "rgba(0,0,0,0.5)",
+                color: "#fff",
+                "&:hover": {
+                  bgcolor: "rgba(0,0,0,0.7)",
+                },
+              }}
+            >
+              <CloseIcon />
+            </IconButton>
+            <video
+              src={HELP_VIDEO_URL}
+              autoPlay
+              controls
+              style={{
+                display: "block",
+                maxWidth: "80vw",
+                maxHeight: "80vh",
+              }}
+            />
+          </Box>
+        </Box>
+      )}
 
       <canvas ref={frameCanvasRef} style={{ display: "none" }} />
 
