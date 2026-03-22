@@ -43,7 +43,7 @@ export const demoRoutes: FastifyPluginAsync<DemoRoutesDeps> = async (app, opts) 
     })
 
     return reply.send({
-      classId: "demo-live",
+      classId: "class-demo",
       problemSetTitle: "Solve: 3x - 5 = 16",
       updatedAt: new Date().toISOString(),
       students: [...ghostStudents, ...realSessions],
