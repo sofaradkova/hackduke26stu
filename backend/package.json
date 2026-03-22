@@ -12,10 +12,11 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@fastify/cors": "^11.2.0",
     "@fastify/multipart": "^9.0.3",
     "dotenv": "^16.4.7",
-    "openai": "^4.85.0",
     "fastify": "^5.2.1",
+    "openai": "^4.85.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {

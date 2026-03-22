@@ -59,6 +59,10 @@ export class SessionStore {
     return this.evaluations.get(sessionId)?.length ?? 0;
   }
 
+  listAllSessions(): ProblemSession[] {
+    return [...this.sessions.values()];
+  }
+
   appendEvaluation(input: {
     sessionId: string;
     screenshotPath: string;
