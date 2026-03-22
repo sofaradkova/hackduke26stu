@@ -8,11 +8,12 @@ export function getApiBase() {
   return String(raw).replace(/\/$/, "");
 }
 
-export async function createAiSession(imageBlob, studentId, classId) {
+export async function createAiSession(imageBlob, studentId, classId, studentName) {
   const fd = new FormData();
   fd.append("image", imageBlob, "frame.jpg");
   fd.append("studentId", studentId);
   fd.append("classId", classId);
+  if (studentName) fd.append("studentName", studentName);
   const base = getApiBase();
   const res = await fetch(`${base}/api/sessions`, { method: "POST", body: fd });
   if (!res.ok) {

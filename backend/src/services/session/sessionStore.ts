@@ -16,6 +16,7 @@ export class SessionStore {
     /** When set, folder names and API id match the saved upload path. */
     id?: string;
     studentId: string | null;
+    studentName: string | null;
     classId: string | null;
     initialScreenshotPath: string;
     sourceOfTruth: SourceOfTruth;
@@ -25,6 +26,7 @@ export class SessionStore {
     const session: ProblemSession = {
       id,
       studentId: input.studentId,
+      studentName: input.studentName,
       classId: input.classId,
       createdAt: now,
       updatedAt: now,

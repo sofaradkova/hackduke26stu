@@ -1,6 +1,8 @@
+import path from "node:path";
 import Fastify from "fastify";
 import multipart from "@fastify/multipart";
 import cors from "@fastify/cors";
+import fastifyStatic from "@fastify/static";
 import { env, useMockAi } from "./env.js";
 import { healthRoutes } from "../routes/health.js";
 import { sessionRoutes } from "../routes/sessions.js";
@@ -40,11 +42,15 @@ export async function buildServer() {
     },
   });
 
+  const storageRoot = path.resolve(env.storageDir);
+  await app.register(fastifyStatic, { root: storageRoot, serve: false });
+
   await app.register(healthRoutes);
   await app.register(demoRoutes, {
     prefix: "/api/demo",
     store,
     ghostService,
+    storageDir: storageRoot,
   });
   await app.register(sessionRoutes, {
     prefix: "/api/sessions",

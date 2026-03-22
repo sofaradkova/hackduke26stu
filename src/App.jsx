@@ -413,7 +413,8 @@ export default function App() {
 
     try {
       if (!backendSessionIdRef.current) {
-        const data = await createAiSession(imageBlob, studentId, CLASS_ID);
+        const sName = localStorage.getItem(LS_STUDENT_NAME) || student.name || "";
+        const data = await createAiSession(imageBlob, studentId, CLASS_ID, sName);
         backendSessionIdRef.current = data.sessionId;
         const next = {
           sessionId: data.sessionId,

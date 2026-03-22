@@ -109,6 +109,7 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesDeps> = async (
     }
 
     const studentId = fields.studentId?.trim() || null;
+    const studentName = fields.studentName?.trim() || null;
     const classId = fields.classId?.trim() || null;
 
     let sourceOfTruth;
@@ -143,6 +144,7 @@ export const sessionRoutes: FastifyPluginAsync<SessionRoutesDeps> = async (
     const session = store.createSession({
       id: sessionId,
       studentId,
+      studentName,
       classId,
       initialScreenshotPath: pathSaved,
       sourceOfTruth,

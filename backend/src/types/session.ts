@@ -9,6 +9,7 @@ export type SessionStatus = "active" | "stuck" | "complete";
 export interface ProblemSession {
   id: string;
   studentId: string | null;
+  studentName: string | null;
   classId: string | null;
   createdAt: Date;
   updatedAt: Date;
