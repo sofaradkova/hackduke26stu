@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Button,
-  CircularProgress,
   Paper,
   TextField,
   ToggleButton,
@@ -17,11 +16,8 @@ import worksheetImage from "./assets/problem-set.png";
 import { supabase, hasSupabaseConfig } from "./supabaseClient";
 import {
   createAiSession,
-  fetchAiSession,
   postAiScreenshot,
 } from "./aiBackend.js";
-
-const SESSION_POLL_MS = 10_000;
 
 const CLASS_ID =
   import.meta.env.VITE_CLASS_ID?.trim() || "class-demo";
@@ -114,58 +110,12 @@ export default function App() {
   /** AI backend: session + progressive evaluations (stored for this student in-session). */
   const [aiSession, setAiSession] = useState(null);
   const [aiEvaluations, setAiEvaluations] = useState([]);
-  const [sessionFromGet, setSessionFromGet] = useState(null);
-  const [sessionPollError, setSessionPollError] = useState(null);
-  const [sessionPollLoading, setSessionPollLoading] = useState(false);
-  const [sessionPollAt, setSessionPollAt] = useState(null);
   const backendSessionIdRef = useRef(null);
   const aiSessionRef = useRef(null);
 
   useEffect(() => {
     aiSessionRef.current = aiSession;
   }, [aiSession]);
-
-  /** Poll GET /api/sessions/:id every 10s for full server state (testing). */
-  useEffect(() => {
-    const id = aiSession?.sessionId;
-    if (!id) {
-      setSessionFromGet(null);
-      setSessionPollError(null);
-      setSessionPollAt(null);
-      return;
-    }
-
-    let cancelled = false;
-    let firstPoll = true;
-
-    const run = async () => {
-      if (firstPoll) setSessionPollLoading(true);
-      setSessionPollError(null);
-      try {
-        const data = await fetchAiSession(id);
-        if (!cancelled) {
-          setSessionFromGet(data);
-          setSessionPollAt(new Date().toISOString());
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setSessionPollError(e instanceof Error ? e.message : String(e));
-        }
-      } finally {
-        if (!cancelled && firstPoll) {
-          setSessionPollLoading(false);
-          firstPoll = false;
-        }
-      }
-    };
-
-    void run();
-    const timer = setInterval(run, SESSION_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [aiSession?.sessionId]);
 
   const isStudentRegistered = Boolean(student.id && student.name.trim());
 
@@ -784,109 +734,6 @@ export default function App() {
               >
                 {student.name}
               </Typography>
-
-              {aiSession?.sessionId ? (
-                <Paper
-                  variant="outlined"
-                  sx={{
-                    flex: 1,
-                    minWidth: { xs: "100%", sm: 320 },
-                    maxWidth: "100%",
-                    maxHeight: 320,
-                    overflow: "auto",
-                    p: 1.5,
-                    borderRadius: "16px",
-                    bgcolor: "rgba(250,250,250,0.98)",
-                  }}
-                >
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: "block", mb: 1 }}
-                  >
-                    GET /api/sessions/{aiSession.sessionId.slice(0, 8)}… · every{" "}
-                    {SESSION_POLL_MS / 1000}s
-                    {sessionPollAt ? ` · last ${sessionPollAt}` : ""}
-                    {sessionPollLoading ? (
-                      <CircularProgress size={14} sx={{ ml: 1, verticalAlign: "middle" }} />
-                    ) : null}
-                  </Typography>
-                  {sessionPollError ? (
-                    <Typography variant="body2" color="error" sx={{ mb: 1 }}>
-                      {sessionPollError}
-                    </Typography>
-                  ) : null}
-                  {sessionFromGet ? (
-                    <Box sx={{ fontFamily: "ui-monospace, monospace", fontSize: 12, lineHeight: 1.5 }}>
-                      <div>
-                        <strong>status</strong> {sessionFromGet.status} · <strong>studentId</strong>{" "}
-                        {sessionFromGet.studentId ?? "—"} · <strong>classId</strong>{" "}
-                        {sessionFromGet.classId ?? "—"}
-                      </div>
-                      <div style={{ marginTop: 4 }}>
-                        <strong>latest</strong> progress {sessionFromGet.latestProgressPercent ?? "—"}
-                        % · category {sessionFromGet.latestCategory ?? "—"} · confidence{" "}
-                        {sessionFromGet.latestConfidenceScore ?? "—"}
-                      </div>
-                      {sessionFromGet.latestReason ? (
-                        <div style={{ marginTop: 6 }}>
-                          <strong>reason</strong> {sessionFromGet.latestReason}
-                        </div>
-                      ) : null}
-                      {sessionFromGet.latestConfusionHighlights?.length ? (
-                        <div style={{ marginTop: 6 }}>
-                          <strong>highlights</strong>{" "}
-                          {sessionFromGet.latestConfusionHighlights.join(" · ")}
-                        </div>
-                      ) : null}
-                      <div style={{ marginTop: 10, fontWeight: 700 }}>
-                        evaluations ({sessionFromGet.evaluations?.length ?? 0})
-                      </div>
-                      {(sessionFromGet.evaluations ?? []).map((ev, i) => (
-                        <Box
-                          key={ev.id ?? i}
-                          sx={{
-                            mt: 1,
-                            p: 1,
-                            borderRadius: 1,
-                            bgcolor: "rgba(0,0,0,0.04)",
-                            border: "1px solid rgba(0,0,0,0.06)",
-                          }}
-                        >
-                          <div>
-                            #{i + 1} · {ev.timestamp}
-                          </div>
-                          {ev.evaluationResult ? (
-                            <>
-                              <div>
-                                progress {ev.evaluationResult.progressPercent}% ·{" "}
-                                {ev.evaluationResult.category} · conf{" "}
-                                {ev.evaluationResult.confidenceScore}
-                              </div>
-                              <div style={{ marginTop: 4 }}>
-                                {ev.evaluationResult.reason}
-                              </div>
-                              {ev.evaluationResult.confusionHighlights?.length ? (
-                                <div style={{ marginTop: 4, opacity: 0.85 }}>
-                                  {ev.evaluationResult.confusionHighlights.join(" · ")}
-                                </div>
-                              ) : null}
-                            </>
-                          ) : null}
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : !sessionPollError ? (
-                    <Typography variant="body2" color="text.secondary">
-                      Loading session snapshot…
-                    </Typography>
-                  ) : null}
-                </Paper>
-              ) : (
-                <Typography variant="body2" color="text.secondary" sx={{ pt: 0.5 }}>
-                  Waiting for AI session…
-                </Typography>
-              )}
             </Box>
 
             <Button

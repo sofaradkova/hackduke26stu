@@ -8,11 +8,29 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Environment files
+# Debug & test logs
+logs/
+aplogs/
+*.jsonl
+
+# Environment files (NEVER commit these!)
 .env
 .env.*
+
+# Screenshots & captures
+*.jpg
+*.jpeg
+*.png
+!src/assets/*.png
+!src/assets/*.jpg
+
+# Downloaded models
+local-llm-video-captioning/
 
 # OS/editor files
 .DS_Store
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
