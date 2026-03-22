@@ -30,6 +30,9 @@ local-llm-video-captioning/
 # Git worktrees
 .worktrees/
 
+# MCP configuration (contains secrets)
+.mcp.json
+
 # OS/editor files
 .DS_Store
 .vscode/
