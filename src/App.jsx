@@ -48,6 +48,16 @@ const SCREENSHOT_TABLE = "student_snapshots";
 /** Shown on worksheet + stored on every snapshot row for the teacher dashboard. */
 const PROBLEM_SET_TITLE = "Simple Linear Equations";
 
+/** Map backend AI categories to Supabase ai_flags CHECK constraint values. */
+const CATEGORY_TO_DB = {
+  "on-track": "success",
+  "calc-error": "calculation-error",
+  "wrong-approach": "wrong-approach",
+  "stuck": "stuck",
+  "off-topic": "off-topic",
+  "unsure": "unsure",
+};
+
 const LS_STUDENT_ID = "studentId";
 const LS_STUDENT_NAME = "studentName";
 
@@ -112,6 +122,7 @@ export default function App() {
   const [aiEvaluations, setAiEvaluations] = useState([]);
   const backendSessionIdRef = useRef(null);
   const aiSessionRef = useRef(null);
+  const isCapturingRef = useRef(false);
 
   useEffect(() => {
     aiSessionRef.current = aiSession;
@@ -367,6 +378,8 @@ export default function App() {
     if (insertError) {
       throw insertError;
     }
+
+    return screenshotId;
   };
 
   const persistAiStore = (session, evaluations) => {
@@ -389,7 +402,7 @@ export default function App() {
 
   const sendFrameToAiBackend = async (imageBlob) => {
     const studentId = localStorage.getItem(LS_STUDENT_ID) || student.id;
-    if (!studentId) return;
+    if (!studentId) return null;
 
     try {
       if (!backendSessionIdRef.current) {
@@ -402,6 +415,7 @@ export default function App() {
         };
         setAiSession(next);
         persistAiStore(next, []);
+        return null;
       } else {
         const evalResult = await postAiScreenshot(backendSessionIdRef.current, imageBlob);
         setAiEvaluations((prev) => {
@@ -422,13 +436,18 @@ export default function App() {
           );
           return next;
         });
+        return evalResult;
       }
     } catch (error) {
       console.error("AI backend request failed:", error);
+      return null;
     }
   };
 
   const captureAndSendFrame = async () => {
+    if (isCapturingRef.current) return;
+    isCapturingRef.current = true;
+    try {
     const drawCanvas = drawCanvasRef.current;
     const highlightCanvas = highlightCanvasRef.current;
     const frameCanvas = frameCanvasRef.current;
@@ -474,14 +493,57 @@ export default function App() {
     const now = new Date();
     const imageBlob = await (await fetch(frameDataUrl)).blob();
 
-    uploadScreenshotToSupabase({
-      imageBlob,
-      takenAt: now.toISOString(),
-    }).catch((error) => {
+    // Upload screenshot to Supabase
+    let screenshotId = null;
+    try {
+      screenshotId = await uploadScreenshotToSupabase({
+        imageBlob,
+        takenAt: now.toISOString(),
+      });
+    } catch (error) {
       console.error("Supabase upload failed:", error);
-    });
+    }
 
-    void sendFrameToAiBackend(imageBlob);
+    // Get AI evaluation
+    const evalResult = await sendFrameToAiBackend(imageBlob);
+
+    // Persist AI result to Supabase: insert ai_flags row, update snapshot
+    if (evalResult && screenshotId && hasSupabaseConfig) {
+      try {
+        const dbCategory = CATEGORY_TO_DB[evalResult.category] || "unsure";
+        const dbStatus = dbCategory === "success" ? "ok" : "flagged";
+
+        const { data: flag, error: flagError } = await supabase
+          .from("ai_flags")
+          .insert({
+            reason: evalResult.reason,
+            category: dbCategory,
+            confidence_score: evalResult.confidenceScore,
+            triggered_at: now.toISOString(),
+            confusion_highlights: evalResult.confusionHighlights || [],
+          })
+          .select("id")
+          .single();
+
+        if (!flagError && flag) {
+          const { error: updateError } = await supabase
+            .from(SCREENSHOT_TABLE)
+            .update({
+              current_flag_id: flag.id,
+              status: dbStatus,
+              progress_percent: evalResult.progressPercent,
+              last_checked_at: now.toISOString(),
+            })
+            .eq("id", screenshotId);
+          if (updateError) console.error("Supabase snapshot update failed:", updateError);
+        }
+      } catch (error) {
+        console.error("Supabase AI flag persist failed:", error);
+      }
+    }
+    } finally {
+      isCapturingRef.current = false;
+    }
   };
 
   const startCaptureLoop = async () => {
