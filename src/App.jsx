@@ -96,7 +96,7 @@ export default function App() {
   const highlightCanvasRef = useRef(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef(null);
-  const screenVideoRef = useRef(null);
+  const worksheetImageRef = useRef(null);
   const captureIntervalRef = useRef(null);
   const frameCanvasRef = useRef(null);
 
@@ -123,6 +123,12 @@ export default function App() {
     clearStoredStudentSession();
   }, []);
 
+  useEffect(() => {
+    const img = new Image();
+    img.src = worksheetImage;
+    img.onload = () => { worksheetImageRef.current = img; };
+  }, []);
+
   const registerStudent = () => {
     const trimmed = nameInput.trim();
     if (!trimmed) return;
@@ -140,7 +146,7 @@ export default function App() {
     } catch {
       /* ignore */
     }
-    // Start capture right after name is saved (browser will prompt for screen share).
+    // Start capture right after name is saved.
     void startCaptureLoop();
   };
 
@@ -317,12 +323,6 @@ export default function App() {
       captureIntervalRef.current = null;
     }
 
-    const stream = screenVideoRef.current?.srcObject;
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      screenVideoRef.current.srcObject = null;
-    }
-
     setIsCaptureRunning(false);
   };
 
@@ -429,21 +429,48 @@ export default function App() {
   };
 
   const captureAndSendFrame = async () => {
-    const video = screenVideoRef.current;
-    const canvas = frameCanvasRef.current;
-    if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return;
+    const drawCanvas = drawCanvasRef.current;
+    const highlightCanvas = highlightCanvasRef.current;
+    const frameCanvas = frameCanvasRef.current;
+    if (!drawCanvas || !highlightCanvas || !frameCanvas) return;
 
-    const ctx = canvas.getContext("2d");
-    const maxWidth = 1024;
-    const ratio = video.videoWidth / video.videoHeight;
-    const width = Math.min(maxWidth, video.videoWidth);
-    const height = Math.floor(width / ratio);
+    const width = drawCanvas.width;
+    const height = drawCanvas.height;
+    if (width === 0 || height === 0) return;
 
-    canvas.width = width;
-    canvas.height = height;
-    ctx.drawImage(video, 0, 0, width, height);
+    frameCanvas.width = width;
+    frameCanvas.height = height;
+    const ctx = frameCanvas.getContext("2d");
 
-    const frameDataUrl = canvas.toDataURL("image/jpeg", 0.75);
+    // Layer 1: White background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+
+    // Layer 2: Worksheet background image (matching CSS background-size: contain)
+    if (worksheetImageRef.current) {
+      const img = worksheetImageRef.current;
+      const imgRatio = img.naturalWidth / img.naturalHeight;
+      const canvasRatio = width / height;
+      let dw, dh, dx, dy;
+      if (imgRatio > canvasRatio) {
+        dw = width; dh = width / imgRatio;
+        dx = 0; dy = (height - dh) / 2;
+      } else {
+        dh = height; dw = height * imgRatio;
+        dx = (width - dw) / 2; dy = 0;
+      }
+      ctx.drawImage(img, dx, dy, dw, dh);
+    }
+
+    // Layer 3: Highlight strokes (opacity matches CSS 0.28)
+    ctx.globalAlpha = 0.28;
+    ctx.drawImage(highlightCanvas, 0, 0);
+    ctx.globalAlpha = 1.0;
+
+    // Layer 4: Draw strokes
+    ctx.drawImage(drawCanvas, 0, 0);
+
+    const frameDataUrl = frameCanvas.toDataURL("image/jpeg", 0.75);
     const now = new Date();
     const imageBlob = await (await fetch(frameDataUrl)).blob();
 
@@ -458,42 +485,15 @@ export default function App() {
   };
 
   const startCaptureLoop = async () => {
-    try {
-      stopCaptureLoop();
-      backendSessionIdRef.current = null;
-      setAiSession(null);
-      setAiEvaluations([]);
-      try {
-        localStorage.removeItem(LS_AI_STORE);
-      } catch {
-        /* ignore */
-      }
+    stopCaptureLoop();
+    backendSessionIdRef.current = null;
+    setAiSession(null);
+    setAiEvaluations([]);
+    try { localStorage.removeItem(LS_AI_STORE); } catch { /* ignore */ }
 
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-      });
-
-      const video = screenVideoRef.current;
-      if (!video) return;
-
-      video.srcObject = stream;
-      await video.play();
-
-      setIsCaptureRunning(true);
-      captureAndSendFrame();
-      captureIntervalRef.current = setInterval(captureAndSendFrame, 3000);
-
-      const [track] = stream.getVideoTracks();
-      if (track) {
-        track.addEventListener("ended", () => {
-          stopCaptureLoop();
-        });
-      }
-    } catch (error) {
-      console.error("Failed to start screen capture:", error);
-      stopCaptureLoop();
-    }
+    setIsCaptureRunning(true);
+    captureAndSendFrame();
+    captureIntervalRef.current = setInterval(captureAndSendFrame, 3000);
   };
 
   useEffect(() => {
@@ -643,7 +643,6 @@ export default function App() {
         </ToggleButtonGroup>
       </Box>
 
-      <video ref={screenVideoRef} autoPlay playsInline muted style={{ display: "none" }} />
       <canvas ref={frameCanvasRef} style={{ display: "none" }} />
 
       {isStudentRegistered && isCaptureRunning ? (
